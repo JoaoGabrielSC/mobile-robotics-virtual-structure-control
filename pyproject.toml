@@ -1,0 +1,10 @@
+[project]
+name = "robotica-sim"
+version = "0.1.0"
+description = "Virtual structure formation simulator for LIMO ground robot and Parrot Bebop 2 drone"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "matplotlib>=3.11.0",
+    "numpy>=2.5.0",
+]
