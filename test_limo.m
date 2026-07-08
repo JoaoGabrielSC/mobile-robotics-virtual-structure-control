@@ -79,9 +79,7 @@ sub_pose = rossubscriber( ...
     sprintf('%s/%s/pose', cfg.pose_topic_prefix, cfg.limo_namespace), ...
     'geometry_msgs/PoseStamped');
 
-J = JoyControl;
-
-%% Aguardar primeira pose
+%% Aguardar primeira pose (antes do joystick — evita interferência)
 pose_topic = sprintf('%s/%s/pose', cfg.pose_topic_prefix, cfg.limo_namespace);
 fprintf('Aguardando pose do OptiTrack em %s (timeout %d s)...\n', ...
     pose_topic, cfg.pose_timeout);
@@ -103,6 +101,9 @@ else
         '  5) PC do MATLAB (.101) na mesma rede; ROS_IP = IP deste PC\n'], ...
         pose_topic, pose_info, pose_topic, pose_topic);
 end
+
+J = JoyControl;
+fprintf('Joystick conectado.\n');
 
 if strcmp(cfg.mode, 'pulse') || strcmp(cfg.mode, 'lemniscate')
     if strcmp(cfg.mode, 'pulse')
@@ -259,21 +260,25 @@ function [position, yaw, ok] = parse_pose_stamped(msg)
     position = [0.0; 0.0; 0.0];
     yaw = 0.0;
 
-    if isempty(msg) || ~isfield(msg, 'Pose') || isempty(msg.Pose)
+    if isempty(msg)
         return;
     end
 
-    pose_latest = msg.Pose;
-    quat = [pose_latest.Orientation.W, pose_latest.Orientation.X, ...
-            pose_latest.Orientation.Y, pose_latest.Orientation.Z];
-    eul_zyx = quat2eul(quat);
-    angles = [eul_zyx(3); eul_zyx(2); eul_zyx(1)];
-    yaw = angles(3);
+    try
+        pose_latest = msg.Pose;
+        quat = [pose_latest.Orientation.W, pose_latest.Orientation.X, ...
+                pose_latest.Orientation.Y, pose_latest.Orientation.Z];
+        eul_zyx = quat2eul(quat);
+        angles = [eul_zyx(3); eul_zyx(2); eul_zyx(1)];
+        yaw = angles(3);
 
-    position = [pose_latest.Position.X; ...
-                pose_latest.Position.Y; ...
-                pose_latest.Position.Z];
-    ok = true;
+        position = [pose_latest.Position.X; ...
+                    pose_latest.Position.Y; ...
+                    pose_latest.Position.Z];
+        ok = true;
+    catch
+        ok = false;
+    end
 end
 
 function pressed = is_stop_pressed(Digital, button_index)
@@ -309,7 +314,7 @@ function [position, yaw, ok, info] = wait_for_limo_pose(sub_pose, pose_topic, ti
             info = [info, ' Mensagem recebida via receive().'];
             return;
         end
-        info = [info, ' receive() retornou mensagem inválida.'];
+        info = [info, ' receive() retornou mensagem inválida (parse_pose_stamped).'];
     catch ME
         info = [info, ' receive() falhou: ', ME.message];
     end

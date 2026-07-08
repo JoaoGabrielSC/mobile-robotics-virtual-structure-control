@@ -356,21 +356,25 @@ function [position, yaw, ok] = read_optitrack_pose(pose_subscriber)
     yaw = 0.0;
 
     latest = pose_subscriber.LatestMessage;
-    if isempty(latest) || ~isfield(latest, 'Pose') || isempty(latest.Pose)
+    if isempty(latest)
         return;
     end
 
-    pose_latest = latest.Pose;
-    quat = [pose_latest.Orientation.W, pose_latest.Orientation.X, ...
-            pose_latest.Orientation.Y, pose_latest.Orientation.Z];
-    eul_zyx = quat2eul(quat); % [yaw pitch roll]
-    angles = [eul_zyx(3); eul_zyx(2); eul_zyx(1)]; % sequência XYZ (refence.m)
-    yaw = angles(3);
+    try
+        pose_latest = latest.Pose;
+        quat = [pose_latest.Orientation.W, pose_latest.Orientation.X, ...
+                pose_latest.Orientation.Y, pose_latest.Orientation.Z];
+        eul_zyx = quat2eul(quat); % [yaw pitch roll]
+        angles = [eul_zyx(3); eul_zyx(2); eul_zyx(1)]; % sequência XYZ (refence.m)
+        yaw = angles(3);
 
-    position = [pose_latest.Position.X; ...
-                pose_latest.Position.Y; ...
-                pose_latest.Position.Z];
-    ok = true;
+        position = [pose_latest.Position.X; ...
+                    pose_latest.Position.Y; ...
+                    pose_latest.Position.Z];
+        ok = true;
+    catch
+        ok = false;
+    end
 end
 
 function u = velocity_to_crazyflie_cmd(v_body, cfg)
