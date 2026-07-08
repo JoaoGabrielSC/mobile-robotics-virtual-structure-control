@@ -12,7 +12,7 @@
 %      roslaunch crazyflie_server crazyflie_server.launch cfs:=[X]
 % 3) LIMO (SSH agilex@192.168.0.XXX, senha agx):
 %      roslaunch limo_base limo_base.launch namespace:=L1
-%    (modo diferencial: luz frontal laranja)
+%    (4wd: luz amarela | car-like: luz verde | omni: LIMO 105 + use_mcnamu)
 % 4) Ajuste cfg.limo_namespace, cfg.drone_namespace e cfg.ros_ip abaixo.
 % 5) Tenha JoyControl.m no path do MATLAB.
 
@@ -61,7 +61,8 @@ cfg.max_zdot = 1.0;
 cfg.max_psidot = 1.0;          % valor conservador para laboratório
 cfg.k_attitude = cfg.max_theta / cfg.v_max_drone_xy;
 
-cfg.limo_differential = true;  % false => habilita Linear.Y (LIMO omnidirecional)
+cfg.limo_steering_mode = 'carlike';  % '4wd' | 'carlike' | 'omni'
+cfg.ackermann_min_radius = 0.40;     % m (manual AgileX; modo car-like)
 cfg.theta_limo = [0.1521; 0.0953; 0.0031; 0.9840; -0.0451; 1.6422];
 
 cfg.joystick_stop_button = 1;  % índice em J.pDigital (JoyControl)
@@ -130,6 +131,10 @@ emergency_kill = false;
 
 fprintf('Loop de controle a %.1f Hz. Botão %d: parar | Botão %d: kill.\n', ...
     1 / cfg.T, cfg.joystick_stop_button, cfg.joystick_kill_button);
+if strcmp(cfg.limo_steering_mode, 'carlike')
+    fprintf(['[AVISO] LIMO car-like: comandos v≈0 + ω serão acoplados ', ...
+        '(R_min=%.2f m).\n'], cfg.ackermann_min_radius);
+end
 
 try
     while running && toc(t0) < cfg.t_final
@@ -229,13 +234,14 @@ try
         v_drone(3) = clamp_scalar(v_drone(3), cfg.v_max_drone_z);
 
         % LIMO: u = [v; w] via cmd_vel (refence.m)
-        msg_cmdvel_limo.Linear.X = v_limo(1);
+        [v_send, w_send] = apply_steering_kinematics(v_limo(1), v_limo(2), cfg);
+        msg_cmdvel_limo.Linear.X = v_send;
         msg_cmdvel_limo.Linear.Y = 0.0;
         msg_cmdvel_limo.Linear.Z = 0.0;
         msg_cmdvel_limo.Angular.X = 0.0;
         msg_cmdvel_limo.Angular.Y = 0.0;
-        msg_cmdvel_limo.Angular.Z = v_limo(2);
-        if ~cfg.limo_differential
+        msg_cmdvel_limo.Angular.Z = w_send;
+        if strcmp(cfg.limo_steering_mode, 'omni')
             msg_cmdvel_limo.Linear.Y = 0.0; %#ok<*UNRCH>
         end
         send(pub_cmdvel_limo, msg_cmdvel_limo);
@@ -403,6 +409,20 @@ function send_neutral_commands(msg_limo, pub_limo, msg_drone, pub_drone, cfg)
     msg_drone.Angular.Y = u_neutral(2);
     msg_drone.Angular.Z = u_neutral(4);
     send(pub_drone, msg_drone);
+end
+
+function [v_out, w_out] = apply_steering_kinematics(v, w, cfg)
+    v_out = v;
+    w_out = w;
+
+    if ~strcmp(cfg.limo_steering_mode, 'carlike')
+        return;
+    end
+
+    if abs(w_out) > 1e-6 && abs(v_out) < 1e-6
+        v_out = sign(w_out) * abs(w_out) * cfg.ackermann_min_radius;
+        v_out = clamp_scalar(v_out, cfg.v_max_limo);
+    end
 end
 
 function y = clamp_vec(x, limit)

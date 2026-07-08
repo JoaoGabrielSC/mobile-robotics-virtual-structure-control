@@ -18,8 +18,13 @@
 %  'monitor'    — só lê pose (mais seguro; primeiro teste)
 %  'teleop'     — joystick comanda v e ω
 %  'pulse'      — sequência curta (frente → parar → girar)
-%  'spin'       — gira no próprio eixo (v=0) por N voltas completas
+%  'spin'       — gira por N voltas (4WD: no eixo; car-like: curva mínima)
 %  'lemniscate' — segue a lemniscata (figura-8) do enunciado no PoI do LIMO
+%
+% ===== Modo mecânico do LIMO (refence.m) =====
+%  '4wd'     — luzes amarelas; aceita v=0 + ω (giro no próprio eixo)
+%  'carlike' — luzes verdes; raio mínimo ~0.4 m (v acoplado a ω quando v≈0)
+%  'omni'    — LIMO 105 + use_mcnamu:=true; permite Linear.Y
 
 clear;
 clc;
@@ -43,7 +48,8 @@ cfg.lq = 0.8;                    % saturação tanh (modo lemniscate)
 % Limites conservadores para teste no lab
 cfg.v_max = 0.30;                % m/s
 cfg.w_max = 0.50;                % rad/s
-cfg.limo_differential = true;    % false => envia também Linear.Y (omni)
+cfg.limo_steering_mode = 'carlike';  % '4wd' | 'carlike' | 'omni'
+cfg.ackermann_min_radius = 0.40;     % m (manual AgileX; modo car-like)
 
 % Joystick (JoyControl) — ajuste os índices se necessário
 cfg.joystick_axis_linear = 2;    % eixo analógico -> velocidade linear
@@ -67,8 +73,16 @@ cfg.obstacle_influence = 0.50;
 cfg.use_obstacle_avoidance = true;
 cfg.pose_timeout = 30;           % segundos aguardando primeira pose
 
-fprintf('=== Teste LIMO | modo: %s ===\n', cfg.mode);
+fprintf('=== Teste LIMO | modo: %s | steering: %s ===\n', ...
+    cfg.mode, cfg.limo_steering_mode);
 fprintf('Botão %d: parar e encerrar.\n', cfg.joystick_stop_button);
+if strcmp(cfg.limo_steering_mode, 'carlike')
+    fprintf(['[AVISO] Car-like: giro no próprio eixo impossível; ', ...
+        'v acoplado a ω quando v≈0 (R_min=%.2f m).\n'], cfg.ackermann_min_radius);
+end
+if strcmp(cfg.mode, 'spin') && strcmp(cfg.limo_steering_mode, 'carlike')
+    fprintf('[AVISO] Modo spin em car-like: trajetória em curva fechada, não rotação pura.\n');
+end
 
 %% ROS (refence.m)
 rosshutdown;
@@ -114,8 +128,14 @@ if strcmp(cfg.mode, 'pulse') || strcmp(cfg.mode, 'spin') || strcmp(cfg.mode, 'le
     if strcmp(cfg.mode, 'pulse')
         msg = 'Modo pulse: o LIMO fará movimentos curtos.';
     elseif strcmp(cfg.mode, 'spin')
-        msg = sprintf(['Modo spin: o LIMO girará no próprio eixo (v=0) ', ...
-            'por %.1f volta(s) a %.2f rad/s.'], cfg.spin_turns, cfg.spin_angular_speed);
+        if strcmp(cfg.limo_steering_mode, 'carlike')
+            msg = sprintf(['Modo spin (car-like): curva mínima R=%.2f m, ', ...
+                '%.1f volta(s), ω=%.2f rad/s.'], ...
+                cfg.ackermann_min_radius, cfg.spin_turns, cfg.spin_angular_speed);
+        else
+            msg = sprintf(['Modo spin: o LIMO girará no próprio eixo (v=0) ', ...
+                'por %.1f volta(s) a %.2f rad/s.'], cfg.spin_turns, cfg.spin_angular_speed);
+        end
     else
         msg = sprintf(['Modo lemniscate: o PoI do LIMO seguirá a figura-8 ', ...
             'por %.0f s.\n  Referência: xd=0.75*sin(2πt/40), yd=0.75*sin(4πt/40)'], cfg.t_final);
@@ -199,7 +219,8 @@ try
                 error('Modo desconhecido: %s', cfg.mode);
         end
 
-        send_limo_cmd(msg_cmdvel, pub_cmdvel, v_cmd, w_cmd, cfg.limo_differential);
+        [v_cmd, w_cmd] = apply_steering_kinematics(v_cmd, w_cmd, cfg);
+        send_limo_cmd(msg_cmdvel, pub_cmdvel, v_cmd, w_cmd, cfg.limo_steering_mode);
 
         log_counter = log_counter + 1;
         if mod(log_counter, 30) == 0
@@ -367,22 +388,36 @@ function topics = list_ros_topics()
     topics = topics(:);
 end
 
-function send_limo_cmd(msg, pub, v, w, differential)
+function send_limo_cmd(msg, pub, v, w, steering_mode)
     msg.Linear.X = v;
     msg.Linear.Y = 0.0;
     msg.Linear.Z = 0.0;
     msg.Angular.X = 0.0;
     msg.Angular.Y = 0.0;
     msg.Angular.Z = w;
-    if ~differential
+    if strcmp(steering_mode, 'omni')
         % Reservado para LIMO omnidirecional (Linear.Y via segundo eixo).
         msg.Linear.Y = 0.0;
     end
     send(pub, msg);
 end
 
+function [v_out, w_out] = apply_steering_kinematics(v, w, cfg)
+    v_out = v;
+    w_out = w;
+
+    if ~strcmp(cfg.limo_steering_mode, 'carlike')
+        return;
+    end
+
+    if abs(w_out) > 1e-6 && abs(v_out) < 1e-6
+        v_out = sign(w_out) * abs(w_out) * cfg.ackermann_min_radius;
+        v_out = clamp_scalar(v_out, cfg.v_max);
+    end
+end
+
 function send_zero_cmd(msg, pub)
-    send_limo_cmd(msg, pub, 0.0, 0.0, true);
+    send_limo_cmd(msg, pub, 0.0, 0.0, '4wd');
 end
 
 function value = read_axis(Analog, index)

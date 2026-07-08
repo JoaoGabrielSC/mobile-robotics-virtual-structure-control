@@ -122,6 +122,19 @@ roslaunch limo_base limo_base.launch namespace:=L1 use_mcnamu:=true
 **Modo carlike**
 
 - As **duas** luzes frontais devem estar **verdes** antes do launch.
+- **Não gira no próprio eixo** (Ackermann; raio mínimo ~0,4 m). Comandos `v=0` + `ω≠0` são ignorados pelo hardware.
+- No MATLAB, use `cfg.limo_steering_mode = 'carlike'` em [`test_limo.m`](test_limo.m) e [`main.m`](main.m). O código acopla automaticamente `v = ω · R_min` quando `v≈0`.
+
+**Modo 4WD (diferencial)**
+
+- Luzes frontais **amarelas** (travas inseridas, linha curta para frente).
+- Aceita **giro no próprio eixo** (`v=0`, `ω≠0`). Use `cfg.limo_steering_mode = '4wd'`.
+
+| Modo físico | Luz | Giro no eixo (`spin`) | Config MATLAB |
+|-------------|-----|----------------------|---------------|
+| 4WD | Amarela | Sim | `cfg.limo_steering_mode = '4wd'` |
+| Car-like | Verde | Não (curva mínima) | `cfg.limo_steering_mode = 'carlike'` |
+| Omni (LIMO 105) | Azul | Sim (+ Linear.Y) | `cfg.limo_steering_mode = 'omni'` |
 
 **Checklist**
 
@@ -140,9 +153,10 @@ Abra o MATLAB 2021 (ou compatível com ROS Toolbox) na máquina conectada à red
 2. Abra [`main.m`](main.m) e ajuste:
 
 ```matlab
-cfg.ros_ip = '192.168.0.100';
+cfg.ros_master_host = '192.168.0.100';
 cfg.limo_namespace = 'L1';
 cfg.drone_namespace = 'cf7';   % mesmo nome do Motive e do launch
+cfg.limo_steering_mode = 'carlike';  % ou '4wd' se luzes amarelas
 ```
 
 3. Posicione os robôs nas **condições iniciais** do enunciado:
@@ -379,8 +393,11 @@ Antes da formação completa, use [`test_limo.m`](test_limo.m) para validar Opti
 cfg.mode = 'monitor';      % 1º teste: só ler pose (robô parado)
 cfg.mode = 'teleop';       % joystick comanda v e ω
 cfg.mode = 'pulse';        % sequência curta automática
+cfg.mode = 'spin';         % N voltas (4WD: no eixo; car-like: curva mínima)
 cfg.mode = 'lemniscate';   % figura-8 do enunciado no PoI do LIMO
 cfg.t_final = 80;          % duração da lemniscata (s)
+cfg.limo_steering_mode = 'carlike';  % alinhar com luzes do LIMO
+cfg.ackermann_min_radius = 0.40;     % raio mínimo car-like (m)
 ```
 
 2. Execute:
@@ -420,6 +437,7 @@ test_limo
 | Pose vazia no MATLAB | `natnet_ros` não rodando ou nome errado no Motive | Conferir passos 1–2 |
 | Takeoff falha | Crazyflie server não iniciado | Repetir passo 3 |
 | LIMO não move | Launch errado ou luz frontal incorreta | Repetir passo 4 |
+| LIMO não gira (`spin`) | Modo car-like (luz verde) com `v=0` | `cfg.limo_steering_mode = 'carlike'` ou trocar para 4WD |
 | Drone não responde | Takeoff não chamado | Passo 11 antes do loop |
 | `rossinit` falha | IP errado ou ROS master inacessível | Ping em `192.168.0.100` |
 | Erro `JoyControl` | Arquivo não está no path | Adicionar pasta ao MATLAB path |
