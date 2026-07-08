@@ -1,128 +1,161 @@
-%% main.m - Controle de Estrutura Virtual (LIMO + Bebop 2)
-% Robótica Móvel 2026/1 - UFES / LAB-AIR
+%% main.m - Controle de Estrutura Virtual (LIMO + Crazyflie) — LAB-AIR
+% Robótica Móvel 2026/1 - UFES
 %
-% Implementa a mesma arquitetura Inner-Outer Loop do simulador Python:
-%   - laço externo: controlador cinemático da formação (lemniscata de Bernoulli)
-%   - laço interno: compensador dinâmico do LIMO e do Bebop 2
-%   - desvio de obstáculo por controle em espaço nulo (prioridade sobre a formação)
+% Versão para testes em hardware real, baseada em refence.m (código validado
+% pelo professor) e na mesma lógica de controle do simulador Python.
 %
-% Base ROS/OptiTrack conforme anexo do PDF "Especificação do projeto.pdf"
-% (MATLAB 2021, tópicos cmd_vel / takeoff / land / vrpn_client_node).
+% ===== ANTES DE RODAR O MATLAB =====
 %
-% Antes de executar:
-%   1. Ajuste ros_ip, limo_namespace e bebop_namespace abaixo.
-%   2. Faça o launch dos nós ROS do LIMO e do Bebop 2.
-%   3. Verifique se o OptiTrack está publicando as poses no vrpn_client_node.
+% 1) Motive: criar corpos rígidos L1 (LIMO) e cfX (Crazyflie, ex.: cf7).
+% 2) Terminal ROS:
+%      roslaunch natnet_ros_cpp natnet_ros.launch
+%      roslaunch crazyflie_server crazyflie_server.launch cfs:=[X]
+% 3) LIMO (SSH agilex@192.168.0.XXX, senha agx):
+%      roslaunch limo_base limo_base.launch namespace:=L1
+%    (modo diferencial: luz frontal laranja)
+% 4) Ajuste cfg.limo_namespace, cfg.drone_namespace e cfg.ros_ip abaixo.
+% 5) Tenha JoyControl.m no path do MATLAB.
 
 clear;
 clc;
 close all;
 
 %% ===================== CONFIGURAÇÃO =====================
-cfg.ros_ip = '192.168.0.100';
-cfg.limo_namespace = 'L1';    % exemplo do PDF
-cfg.bebop_namespace = 'B1';   % exemplo do PDF
+% Rede LAB-AIR:
+%   ROS master: 192.168.0.100:11311  (MATLAB rosinit)
+%   LIMO onboard: 192.168.0.104      (SSH; nó registra-se no master)
+%   Motive/NatNet: 192.168.0.101
+cfg.ros_master_host = '192.168.0.100';
+cfg.ros_master_port = 11311;
+cfg.limo_host = '192.168.0.104';
+cfg.limo_namespace = 'L1';
+cfg.drone_namespace = 'cf7';
+cfg.pose_topic_prefix = '/natnet_ros';
 
-cfg.T = 1 / 30;               % período de amostragem (30 Hz)
-cfg.t_final = 100;            % duração do experimento (s)
-cfg.takeoff_pause = 5;        % tempo de espera após takeoff (s)
+cfg.T = 1 / 30;                % 30 Hz (especificação)
+cfg.t_final = 100;             % duração do experimento (s)
+cfg.takeoff_pause = 5;         % espera após takeoff (s)
 
-cfg.a1 = 0.10;                % deslocamento PoI do LIMO (m)
+cfg.a1 = 0.10;                 % PoI do LIMO (m)
 cfg.kq = 1.2;
 cfg.lq = 0.8;
 cfg.kd_limo = 4.0;
 
 cfg.rho_f = 1.5;
 cfg.beta_f = pi / 2;
-cfg.bebop_altitude = 1.5;
+cfg.drone_altitude = 1.5;      % altitude alvo (m)
 
 cfg.obstacle_center = [-0.20; 0.425];
 cfg.obstacle_radius = 0.15;
 cfg.obstacle_influence = 0.50;
 
 cfg.v_max_limo = 2.0;
-cfg.v_max_bebop_xy = 2.0;
-cfg.v_max_bebop_z = 1.0;
+cfg.v_max_drone_xy = 2.0;
+cfg.v_max_drone_z = 1.0;
 cfg.v_max_state = 3.0;
 
+% Limites Crazyflie (refence.m / enunciado: arfagem e rolagem <= 5°)
+cfg.max_phi = deg2rad(5);
+cfg.max_theta = deg2rad(5);
+cfg.max_zdot = 1.0;
+cfg.max_psidot = 1.0;          % valor conservador para laboratório
+cfg.k_attitude = cfg.max_theta / cfg.v_max_drone_xy;
+
+cfg.limo_differential = true;  % false => habilita Linear.Y (LIMO omnidirecional)
 cfg.theta_limo = [0.1521; 0.0953; 0.0031; 0.9840; -0.0451; 1.6422];
 
-cfg.joystick_stop_button = 1; % botão do vrjoystick para encerrar o loop
+cfg.joystick_stop_button = 1;  % índice em J.pDigital (JoyControl)
+cfg.joystick_kill_button = 2;  % botão extra para kill de emergência
 
 Kq = diag([cfg.kq, cfg.kq, cfg.kq * 0.83, cfg.kq * 1.25, cfg.kq * 0.83, cfg.kq]);
 Lq = diag([cfg.lq, cfg.lq, cfg.lq * 0.62, cfg.lq * 1.25, cfg.lq * 0.62, cfg.lq]);
 KD_LIMO = diag([cfg.kd_limo, cfg.kd_limo]);
 
-%% ===================== ROS (PDF) =====================
-% A interface do ROS deve estar fechada antes de ser aberta.
+%% ===================== ROS (refence.m) =====================
 rosshutdown;
+rosinit(sprintf('http://%s:%d', cfg.ros_master_host, cfg.ros_master_port));
 
-% Inicialização rede ROS MATLAB
-rosinit(cfg.ros_ip);
-
-% --- LIMO: cmd_vel ---
+% LIMO: cmd_vel
 pub_cmdvel_limo = rospublisher( ...
     sprintf('/%s/cmd_vel', cfg.limo_namespace), 'geometry_msgs/Twist');
 msg_cmdvel_limo = rosmessage(pub_cmdvel_limo);
 
-% --- Bebop: cmd_vel, takeoff, land ---
-pub_cmdvel_bebop = rospublisher( ...
-    sprintf('/%s/cmd_vel', cfg.bebop_namespace), 'geometry_msgs/Twist');
-msg_cmdvel_bebop = rosmessage(pub_cmdvel_bebop);
+% Crazyflie: cmd_vel
+pub_cmdvel_drone = rospublisher( ...
+    sprintf('/%s/cmd_vel', cfg.drone_namespace), 'geometry_msgs/Twist');
+msg_cmdvel_drone = rosmessage(pub_cmdvel_drone);
 
-pub_takeoff_bebop = rospublisher( ...
-    sprintf('/%s/takeoff', cfg.bebop_namespace), 'std_msgs/Empty');
-msg_takeoff_bebop = rosmessage(pub_takeoff_bebop);
+% Crazyflie: serviços takeoff / land / kill
+takeoff_client = rossvcclient( ...
+    sprintf('/%s/takeoff', cfg.drone_namespace), 'std_srvs/Trigger');
+takeoff_request = rosmessage(takeoff_client);
 
-pub_land_bebop = rospublisher( ...
-    sprintf('/%s/land', cfg.bebop_namespace), 'std_msgs/Empty');
-msg_land_bebop = rosmessage(pub_land_bebop);
+land_client = rossvcclient( ...
+    sprintf('/%s/land', cfg.drone_namespace), 'std_srvs/Trigger');
+land_request = rosmessage(land_client);
 
-% Leitura da pose dos robôs via OptiTrack
+kill_client = rossvcclient( ...
+    sprintf('/%s/kill', cfg.drone_namespace), 'std_srvs/Trigger');
+kill_request = rosmessage(kill_client);
+
+% Poses via natnet_ros + OptiTrack (PoseStamped)
 sub_pose_limo = rossubscriber( ...
-    sprintf('vrpn_client_node/%s/pose', cfg.limo_namespace));
-sub_pose_bebop = rossubscriber( ...
-    sprintf('vrpn_client_node/%s/pose', cfg.bebop_namespace));
+    sprintf('%s/%s/pose', cfg.pose_topic_prefix, cfg.limo_namespace), ...
+    'geometry_msgs/PoseStamped');
+sub_pose_drone = rossubscriber( ...
+    sprintf('%s/%s/pose', cfg.pose_topic_prefix, cfg.drone_namespace), ...
+    'geometry_msgs/PoseStamped');
 
-% Joystick (PDF)
-J = vrjoystick(1);
+% Joystick (refence.m)
+J = JoyControl;
 
-%% ===================== DECOLAGEM DO DRONE =====================
-fprintf('Enviando takeoff para o Bebop 2...\n');
-send(pub_takeoff_bebop, msg_takeoff_bebop);
+%% ===================== DECOLAGEM =====================
+fprintf('Chamando serviço takeoff do Crazyflie (%s)...\n', cfg.drone_namespace);
+takeoff_response = call(takeoff_client, takeoff_request, 'Timeout', 5);
+if ~takeoff_response.Success
+    error('Takeoff falhou: %s', takeoff_response.Message);
+end
 pause(cfg.takeoff_pause);
 
 %% ===================== ESTADO DO CONTROLADOR =====================
-v_limo = [0.0; 0.0];              % [u; omega]
-v_bebop = [0.0; 0.0; 0.0; 0.0];   % [vx; vy; vz; psi_dot] no corpo
+v_limo = [0.0; 0.0];              % [v; w]
+v_drone = [0.0; 0.0; 0.0; 0.0];   % [vx; vy; vz; psidot] no corpo
 
 hist_t = [];
 hist_error = [];
 
 t0 = tic;
 running = true;
+emergency_kill = false;
 
-fprintf('Iniciando loop de controle a %.1f Hz...\n', 1 / cfg.T);
+fprintf('Loop de controle a %.1f Hz. Botão %d: parar | Botão %d: kill.\n', ...
+    1 / cfg.T, cfg.joystick_stop_button, cfg.joystick_kill_button);
 
 try
     while running && toc(t0) < cfg.t_final
         loop_start = tic;
         t = toc(t0);
 
-        % --- Joystick: botão de parada de emergência (PDF) ---
-        Digital = button(J);
+        mRead(J);
+        Digital = J.pDigital;
+
+        if Digital(cfg.joystick_kill_button)
+            fprintf('Kill de emergência acionado pelo joystick.\n');
+            emergency_kill = true;
+            break;
+        end
         if Digital(cfg.joystick_stop_button)
             fprintf('Parada solicitada pelo joystick.\n');
             break;
         end
 
-        % --- Leitura das poses via OptiTrack (PDF) ---
         [pos_limo, yaw_limo, ok_limo] = read_optitrack_pose(sub_pose_limo);
-        [pos_bebop, yaw_bebop, ok_bebop] = read_optitrack_pose(sub_pose_bebop);
+        [pos_drone, yaw_drone, ok_drone] = read_optitrack_pose(sub_pose_drone);
 
-        if ~ok_limo || ~ok_bebop
-            warning('Pose indisponível. Enviando velocidade zero.');
-            send_zero_velocities(msg_cmdvel_limo, pub_cmdvel_limo, msg_cmdvel_bebop, pub_cmdvel_bebop);
+        if ~ok_limo || ~ok_drone
+            warning('Pose indisponível. Enviando comandos neutros.');
+            send_neutral_commands(msg_cmdvel_limo, pub_cmdvel_limo, ...
+                msg_cmdvel_drone, pub_cmdvel_drone, cfg);
             pause(cfg.T);
             continue;
         end
@@ -131,16 +164,15 @@ try
         y1 = pos_limo(2);
         psi1 = yaw_limo;
 
-        x2 = pos_bebop(1);
-        y2 = pos_bebop(2);
-        z2 = pos_bebop(3);
-        psi2 = yaw_bebop;
+        x2 = pos_drone(1);
+        y2 = pos_drone(2);
+        z2 = pos_drone(3);
+        psi2 = yaw_drone;
 
-        % --- Pontos de interesse ---
         poi_limo = [x1 + cfg.a1 * cos(psi1); y1 + cfg.a1 * sin(psi1); 0.0];
-        poi_bebop = [x2; y2; z2];
+        poi_drone = [x2; y2; z2];
 
-        delta = poi_bebop - poi_limo;
+        delta = poi_drone - poi_limo;
         dist_2d = sqrt(delta(1)^2 + delta(2)^2);
 
         rho = max(dist_2d, 1e-3);
@@ -157,7 +189,6 @@ try
         q_r = qd_dot + Lq * tanh_term;
         q_r = apply_obstacle_null_space(q_r, poi_limo(1:2), cfg);
 
-        % --- Jacobiano inverso ---
         S = [cos(alpha) * cos(beta), -rho * sin(alpha) * cos(beta), -rho * cos(alpha) * sin(beta); ...
              cos(alpha) * sin(beta), -rho * sin(alpha) * sin(beta),  rho * cos(alpha) * cos(beta); ...
              sin(alpha),              rho * cos(alpha),               0.0];
@@ -165,22 +196,20 @@ try
         J_inv = [eye(3), zeros(3); eye(3), S];
         x_r = J_inv * q_r;
 
-        % --- Cinemática inversa local: LIMO ---
         A1_inv = [cos(psi1), sin(psi1); ...
                   -sin(psi1) / cfg.a1, cos(psi1) / cfg.a1];
         v_d_limo = clamp_vec(A1_inv * x_r(1:2), cfg.v_max_limo);
 
-        % --- Cinemática inversa local: Bebop ---
         R_yaw = [cos(psi2), sin(psi2), 0.0; ...
                  -sin(psi2), cos(psi2), 0.0; ...
                   0.0, 0.0, 1.0];
-        v_d_bebop_body = R_yaw * x_r(4:6);
-        v_d_bebop_body(1:2) = clamp_vec(v_d_bebop_body(1:2), cfg.v_max_bebop_xy);
-        v_d_bebop_body(3) = clamp_scalar( ...
-            v_d_bebop_body(3) + 2.0 * (cfg.bebop_altitude - z2), cfg.v_max_bebop_z);
-        v_d_bebop = [v_d_bebop_body; 0.0];
+        v_d_drone_body = R_yaw * x_r(4:6);
+        v_d_drone_body(1:2) = clamp_vec(v_d_drone_body(1:2), cfg.v_max_drone_xy);
+        v_d_drone_body(3) = clamp_scalar( ...
+            v_d_drone_body(3) + 2.0 * (cfg.drone_altitude - z2), cfg.v_max_drone_z);
+        v_d_drone = [v_d_drone_body; 0.0];
 
-        % --- Laço interno: LIMO ---
+        % Laço interno LIMO
         u_real = v_limo(1);
         w_real = v_limo(2);
         Y1 = [u_real, 0.0, w_real^2, 0.0, 0.0, 0.0; ...
@@ -193,32 +222,34 @@ try
         v_dot_limo = M1 \ (u_control_limo - C1 * v_limo);
         v_limo = clamp_vec(v_limo + cfg.T * v_dot_limo, cfg.v_max_state);
 
-        % --- Laço interno: Bebop (modelo simplificado v_dot = f1*u - f2*v) ---
-        u_control_bebop = v_d_bebop + 1.0 * (v_d_bebop - v_bebop);
-        v_bebop(1:3) = clamp_vec( ...
-            v_bebop(1:3) + cfg.T * 15.0 * (u_control_bebop(1:3) - v_bebop(1:3)), cfg.v_max_state);
-        v_bebop(3) = clamp_scalar(v_bebop(3), cfg.v_max_bebop_z);
+        % Laço interno drone (velocidades desejadas -> integrador interno)
+        u_control_drone = v_d_drone + 1.0 * (v_d_drone - v_drone);
+        v_drone(1:3) = clamp_vec( ...
+            v_drone(1:3) + cfg.T * 15.0 * (u_control_drone(1:3) - v_drone(1:3)), cfg.v_max_state);
+        v_drone(3) = clamp_scalar(v_drone(3), cfg.v_max_drone_z);
 
-        % --- Envio dos comandos via ROS (PDF) ---
-        % LIMO: apenas Linear.X e Angular.Z (PDF)
+        % LIMO: u = [v; w] via cmd_vel (refence.m)
         msg_cmdvel_limo.Linear.X = v_limo(1);
         msg_cmdvel_limo.Linear.Y = 0.0;
         msg_cmdvel_limo.Linear.Z = 0.0;
         msg_cmdvel_limo.Angular.X = 0.0;
         msg_cmdvel_limo.Angular.Y = 0.0;
         msg_cmdvel_limo.Angular.Z = v_limo(2);
+        if ~cfg.limo_differential
+            msg_cmdvel_limo.Linear.Y = 0.0; %#ok<*UNRCH>
+        end
         send(pub_cmdvel_limo, msg_cmdvel_limo);
 
-        % Bebop: cmd_vel completo no referencial do corpo
-        msg_cmdvel_bebop.Linear.X = v_bebop(1);
-        msg_cmdvel_bebop.Linear.Y = v_bebop(2);
-        msg_cmdvel_bebop.Linear.Z = v_bebop(3);
-        msg_cmdvel_bebop.Angular.X = 0.0;
-        msg_cmdvel_bebop.Angular.Y = 0.0;
-        msg_cmdvel_bebop.Angular.Z = 0.0;
-        send(pub_cmdvel_bebop, msg_cmdvel_bebop);
+        % Crazyflie: u = [phi; theta; zdot; psidot] via cmd_vel (refence.m)
+        u_drone = velocity_to_crazyflie_cmd(v_drone, cfg);
+        msg_cmdvel_drone.Linear.X = 0.0;
+        msg_cmdvel_drone.Linear.Y = 0.0;
+        msg_cmdvel_drone.Linear.Z = u_drone(3);
+        msg_cmdvel_drone.Angular.X = u_drone(1);
+        msg_cmdvel_drone.Angular.Y = u_drone(2);
+        msg_cmdvel_drone.Angular.Z = u_drone(4);
+        send(pub_cmdvel_drone, msg_cmdvel_drone);
 
-        % --- Log ---
         hist_t(end + 1, 1) = t; %#ok<AGROW>
         hist_error(:, end + 1) = error_q; %#ok<AGROW>
 
@@ -227,7 +258,6 @@ try
                 t, error_q(4), rad2deg(error_q(6)));
         end
 
-        % --- Sincronização 30 Hz ---
         elapsed = toc(loop_start);
         pause(max(0.0, cfg.T - elapsed));
     end
@@ -235,10 +265,26 @@ catch ME
     fprintf('Erro durante o loop: %s\n', ME.message);
 end
 
-%% ===================== ENCERRAMENTO (PDF) =====================
-fprintf('Encerrando: velocidade zero, pouso e rosshutdown.\n');
-send_zero_velocities(msg_cmdvel_limo, pub_cmdvel_limo, msg_cmdvel_bebop, pub_cmdvel_bebop);
-send(pub_land_bebop, msg_land_bebop);
+%% ===================== ENCERRAMENTO =====================
+fprintf('Encerrando experimento...\n');
+send_neutral_commands(msg_cmdvel_limo, pub_cmdvel_limo, msg_cmdvel_drone, pub_cmdvel_drone, cfg);
+
+if emergency_kill
+    fprintf('Enviando kill ao Crazyflie.\n');
+    try
+        call(kill_client, kill_request, 'Timeout', 5);
+    catch kill_error
+        warning('Falha ao chamar kill: %s', kill_error.message);
+    end
+else
+    fprintf('Enviando land ao Crazyflie.\n');
+    try
+        call(land_client, land_request, 'Timeout', 5);
+    catch land_error
+        warning('Falha ao chamar land: %s', land_error.message);
+    end
+end
+
 pause(2);
 rosshutdown;
 
@@ -310,15 +356,16 @@ function [position, yaw, ok] = read_optitrack_pose(pose_subscriber)
     yaw = 0.0;
 
     latest = pose_subscriber.LatestMessage;
-    if isempty(latest) || isempty(latest.Pose)
+    if isempty(latest) || ~isfield(latest, 'Pose') || isempty(latest.Pose)
         return;
     end
 
     pose_latest = latest.Pose;
     quat = [pose_latest.Orientation.W, pose_latest.Orientation.X, ...
             pose_latest.Orientation.Y, pose_latest.Orientation.Z];
-    eul_zyx = quat2eul(quat, 'ZYX'); % [yaw pitch roll]
-    yaw = eul_zyx(1);
+    eul_zyx = quat2eul(quat); % [yaw pitch roll]
+    angles = [eul_zyx(3); eul_zyx(2); eul_zyx(1)]; % sequência XYZ (refence.m)
+    yaw = angles(3);
 
     position = [pose_latest.Position.X; ...
                 pose_latest.Position.Y; ...
@@ -326,7 +373,16 @@ function [position, yaw, ok] = read_optitrack_pose(pose_subscriber)
     ok = true;
 end
 
-function send_zero_velocities(msg_limo, pub_limo, msg_bebop, pub_bebop)
+function u = velocity_to_crazyflie_cmd(v_body, cfg)
+    % Mapeia velocidades desejadas no corpo para [phi; theta; zdot; psidot].
+    phi = clamp_scalar(cfg.k_attitude * v_body(2), cfg.max_phi);
+    theta = clamp_scalar(cfg.k_attitude * v_body(1), cfg.max_theta);
+    zdot = clamp_scalar(v_body(3), cfg.max_zdot);
+    psidot = clamp_scalar(v_body(4), cfg.max_psidot);
+    u = [phi; theta; zdot; psidot];
+end
+
+function send_neutral_commands(msg_limo, pub_limo, msg_drone, pub_drone, cfg)
     msg_limo.Linear.X = 0.0;
     msg_limo.Linear.Y = 0.0;
     msg_limo.Linear.Z = 0.0;
@@ -335,13 +391,14 @@ function send_zero_velocities(msg_limo, pub_limo, msg_bebop, pub_bebop)
     msg_limo.Angular.Z = 0.0;
     send(pub_limo, msg_limo);
 
-    msg_bebop.Linear.X = 0.0;
-    msg_bebop.Linear.Y = 0.0;
-    msg_bebop.Linear.Z = 0.0;
-    msg_bebop.Angular.X = 0.0;
-    msg_bebop.Angular.Y = 0.0;
-    msg_bebop.Angular.Z = 0.0;
-    send(pub_bebop, msg_bebop);
+    u_neutral = velocity_to_crazyflie_cmd([0.0; 0.0; 0.0; 0.0], cfg);
+    msg_drone.Linear.X = 0.0;
+    msg_drone.Linear.Y = 0.0;
+    msg_drone.Linear.Z = u_neutral(3);
+    msg_drone.Angular.X = u_neutral(1);
+    msg_drone.Angular.Y = u_neutral(2);
+    msg_drone.Angular.Z = u_neutral(4);
+    send(pub_drone, msg_drone);
 end
 
 function y = clamp_vec(x, limit)

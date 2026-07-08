@@ -318,19 +318,40 @@ O projeto deverá conter:
 
 ## Execução em hardware (MATLAB + ROS)
 
-O arquivo `main.m` na raiz do projeto implementa o mesmo controlador conectado aos robôs reais via ROS e OptiTrack, seguindo o anexo MATLAB do PDF.
+O arquivo `main.m` implementa o mesmo controlador conectado aos robôs reais do LAB-AIR, seguindo `refence.m` (código validado pelo professor).
 
 ```matlab
 main
 ```
 
-Antes de executar, ajuste em `main.m`:
+### Antes de rodar
 
-- `cfg.ros_ip` — IP do servidor ROS (padrão `192.168.0.100`)
-- `cfg.limo_namespace` — namespace do LIMO no launch (ex.: `L1`)
-- `cfg.bebop_namespace` — namespace do Bebop 2 no launch (ex.: `B1`)
+1. **Motive:** corpos rígidos `L1` (LIMO) e `cfX` (Crazyflie, ex.: `cf7`)
+2. **ROS:**
+   ```bash
+   roslaunch natnet_ros_cpp natnet_ros.launch
+   roslaunch crazyflie_server crazyflie_server.launch cfs:=[X]
+   ```
+3. **LIMO** (SSH `agilex@192.168.0.XXX`, senha `agx`):
+   ```bash
+   roslaunch limo_base limo_base.launch namespace:=L1
+   ```
+4. **MATLAB:** `JoyControl.m` no path; ajuste em `main.m`:
+   - `cfg.ros_ip` — IP do servidor ROS (`192.168.0.100`)
+   - `cfg.limo_namespace` — `L1`
+   - `cfg.drone_namespace` — ex.: `cf7`
 
-O script publica `cmd_vel`, envia `takeoff`/`land` ao drone, lê poses em `vrpn_client_node/<NAMESPACE>/pose` e usa o joystick para parada de emergência.
+### Interface ROS usada
+
+| Recurso | Tópico / serviço |
+|---------|------------------|
+| Pose LIMO/drone | `/natnet_ros/<NAMESPACE>/pose` (`PoseStamped`) |
+| cmd_vel LIMO | `/L1/cmd_vel` → `[v; ω]` |
+| cmd_vel Crazyflie | `/cfX/cmd_vel` → `[φ; θ; ż; ψ̇]` |
+| Takeoff / land / kill | serviços `std_srvs/Trigger` |
+| Joystick | `JoyControl` — botão 1: parar; botão 2: kill |
+
+O simulador Python permanece disponível para validação offline antes dos testes no laboratório.
 
 ## Pré-requisitos
 
