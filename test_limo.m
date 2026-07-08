@@ -28,7 +28,7 @@ close all;
 cfg.ros_master_host = '192.168.0.100';   % rosserver (roscore)
 cfg.ros_master_port = 11311;             % porta padrão do master
 cfg.limo_host = '192.168.0.104';         % onboard do LIMO (só SSH/launch; não usar no rosinit)
-cfg.limo_namespace = 'L1';
+cfg.limo_namespace = 'L1';       % ATENÇÃO: L + número 1, não I (i maiúsculo)
 cfg.pose_topic_prefix = '/natnet_ros';
 
 cfg.T = 1 / 30;                  % 30 Hz
@@ -81,21 +81,31 @@ sub_pose = rossubscriber( ...
 J = JoyControl;
 
 %% Aguardar primeira pose
-fprintf('Aguardando pose do OptiTrack em %s/%s/pose ...\n', ...
-    cfg.pose_topic_prefix, cfg.limo_namespace);
+pose_topic = sprintf('%s/%s/pose', cfg.pose_topic_prefix, cfg.limo_namespace);
+fprintf('Aguardando pose do OptiTrack em %s (timeout 30 s)...\n', pose_topic);
+
 pose_ok = false;
-for attempt = 1:60
-    [pos, yaw, pose_ok] = read_optitrack_pose(sub_pose);
-    if pose_ok
-        fprintf('Pose OK: x=%.3f y=%.3f yaw=%.1f deg\n', pos(1), pos(2), rad2deg(yaw));
-        break;
-    end
-    pause(0.5);
+pos = [0; 0; 0];
+yaw = 0;
+
+try
+    [pose_msg, ~, ~] = receive(sub_pose, 30);
+    [pos, yaw, pose_ok] = parse_pose_stamped(pose_msg);
+catch
+    pose_ok = false;
 end
-if ~pose_ok
+
+if pose_ok
+    fprintf('Pose OK: x=%.3f y=%.3f yaw=%.1f deg\n', pos(1), pos(2), rad2deg(yaw));
+else
     send_zero_cmd(msg_cmdvel, pub_cmdvel);
     rosshutdown;
-    error('Não foi possível ler pose do LIMO. Verifique Motive e natnet_ros.');
+    error(['Não foi possível ler pose do LIMO em %s.\n\n', ...
+        'Verifique:\n', ...
+        '  1) cfg.limo_namespace = ''L1'' (letra L, não I)\n', ...
+        '  2) natnet_ros rodando no rosserver\n', ...
+        '  3) corpo rígido L1 visível no Motive\n', ...
+        '  4) no terminal ROS: rostopic echo %s\n'], pose_topic, pose_topic);
 end
 
 if strcmp(cfg.mode, 'pulse') || strcmp(cfg.mode, 'lemniscate')
@@ -129,7 +139,7 @@ try
         Analog = J.pAnalog;
         Digital = J.pDigital;
 
-        if numel(Digital) >= cfg.joystick_stop_button && Digital(cfg.joystick_stop_button)
+        if is_stop_pressed(Digital, cfg.joystick_stop_button)
             fprintf('Parada solicitada pelo joystick.\n');
             break;
         end
@@ -241,11 +251,23 @@ function [position, yaw, ok] = read_optitrack_pose(pose_subscriber)
     yaw = 0.0;
 
     latest = pose_subscriber.LatestMessage;
-    if isempty(latest) || ~isfield(latest, 'Pose') || isempty(latest.Pose)
+    if isempty(latest)
         return;
     end
 
-    pose_latest = latest.Pose;
+    [position, yaw, ok] = parse_pose_stamped(latest);
+end
+
+function [position, yaw, ok] = parse_pose_stamped(msg)
+    ok = false;
+    position = [0.0; 0.0; 0.0];
+    yaw = 0.0;
+
+    if isempty(msg) || ~isfield(msg, 'Pose') || isempty(msg.Pose)
+        return;
+    end
+
+    pose_latest = msg.Pose;
     quat = [pose_latest.Orientation.W, pose_latest.Orientation.X, ...
             pose_latest.Orientation.Y, pose_latest.Orientation.Z];
     eul_zyx = quat2eul(quat);
@@ -256,6 +278,13 @@ function [position, yaw, ok] = read_optitrack_pose(pose_subscriber)
                 pose_latest.Position.Y; ...
                 pose_latest.Position.Z];
     ok = true;
+end
+
+function pressed = is_stop_pressed(Digital, button_index)
+    pressed = false;
+    if button_index >= 1 && numel(Digital) >= button_index
+        pressed = logical(Digital(button_index));
+    end
 end
 
 function send_limo_cmd(msg, pub, v, w, differential)
