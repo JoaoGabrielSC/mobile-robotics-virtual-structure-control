@@ -1,6 +1,6 @@
 # robotica-sim
 
-Simulador de estrutura virtual para o robô terrestre **LIMO** e o quadrirrotor **Parrot Bebop 2**, desenvolvido no contexto da disciplina *Robótica Móvel* (UFES, 2026/1).
+Simulador de estrutura virtual para o robô terrestre **LIMO** e o quadrirrotor **Parrot Bebop 2**, desenvolvido no contexto da disciplina _Robótica Móvel_ (UFES, 2026/1).
 
 Este repositório implementa em Python a arquitetura **Inner–Outer Loop** descrita no enunciado: controlador cinemático da formação (laço externo), compensadores dinâmicos dos dois robôs (laço interno), desvio de obstáculo em espaço nulo e integração numérica da planta.
 
@@ -328,14 +328,18 @@ main
 
 1. **Motive:** corpos rígidos `L1` (LIMO) e `cfX` (Crazyflie, ex.: `cf7`)
 2. **ROS:**
+
    ```bash
    roslaunch natnet_ros_cpp natnet_ros.launch
    roslaunch crazyflie_server crazyflie_server.launch cfs:=[X]
    ```
+
 3. **LIMO** (SSH `agilex@192.168.0.XXX`, senha `agx`):
+
    ```bash
    roslaunch limo_base limo_base.launch namespace:=L1
    ```
+
 4. **MATLAB:** `JoyControl.m` no path; ajuste em `main.m`:
    - `cfg.ros_ip` — IP do servidor ROS (`192.168.0.100`)
    - `cfg.limo_namespace` — `L1`
@@ -343,13 +347,13 @@ main
 
 ### Interface ROS usada
 
-| Recurso | Tópico / serviço |
-|---------|------------------|
-| Pose LIMO/drone | `/natnet_ros/<NAMESPACE>/pose` (`PoseStamped`) |
-| cmd_vel LIMO | `/L1/cmd_vel` → `[v; ω]` |
-| cmd_vel Crazyflie | `/cfX/cmd_vel` → `[φ; θ; ż; ψ̇]` |
-| Takeoff / land / kill | serviços `std_srvs/Trigger` |
-| Joystick | `JoyControl` — botão 1: parar; botão 2: kill |
+| Recurso               | Tópico / serviço                               |
+| --------------------- | ---------------------------------------------- |
+| Pose LIMO/drone       | `/natnet_ros/<NAMESPACE>/pose` (`PoseStamped`) |
+| cmd_vel LIMO          | `/L1/cmd_vel` → `[v; ω]`                       |
+| cmd_vel Crazyflie     | `/cfX/cmd_vel` → `[φ; θ; ż; ψ̇]`                |
+| Takeoff / land / kill | serviços `std_srvs/Trigger`                    |
+| Joystick              | `JoyControl` — botão 1: parar; botão 2: kill   |
 
 O simulador Python permanece disponível para validação offline antes dos testes no laboratório.
 
@@ -383,16 +387,16 @@ uv run python src/main.py --t_final 40 --anim
 
 ## Parâmetros da CLI
 
-| Flag | Padrão | Descrição |
-|------|--------|-----------|
-| `--t_final` | `100.0` | Tempo total de simulação (s) |
-| `--dt` | `1/30` | Período de amostragem T (30 Hz) |
-| `--kq` | `1.2` | Ganho proporcional do controlador da formação |
-| `--lq` | `0.8` | Limite de saturação da tangente hiperbólica |
-| `--kd_limo` | `4.0` | Ganho do compensador dinâmico do LIMO |
-| `--anim` | off | Anima a movimentação do LIMO e do Bebop 2 |
-| `--output-dir` | `output` | Diretório onde os gráficos são salvos |
-| `--no-show` | off | Salva os gráficos sem abrir janelas interativas |
+| Flag           | Padrão   | Descrição                                       |
+| -------------- | -------- | ----------------------------------------------- |
+| `--t_final`    | `100.0`  | Tempo total de simulação (s)                    |
+| `--dt`         | `1/30`   | Período de amostragem T (30 Hz)                 |
+| `--kq`         | `1.2`    | Ganho proporcional do controlador da formação   |
+| `--lq`         | `0.8`    | Limite de saturação da tangente hiperbólica     |
+| `--kd_limo`    | `4.0`    | Ganho do compensador dinâmico do LIMO           |
+| `--anim`       | off      | Anima a movimentação do LIMO e do Bebop 2       |
+| `--output-dir` | `output` | Diretório onde os gráficos são salvos           |
+| `--no-show`    | off      | Salva os gráficos sem abrir janelas interativas |
 
 ## Saída
 
@@ -421,3 +425,13 @@ Estado da formação `q = [xf, yf, zf, ρ, α, β]`, com PoI no ponto de control
 3. **Jacobiano inverso** — mapeia velocidades da formação para comandos do LIMO e do Bebop
 4. **Laço interno** — compensador dinâmico do LIMO (regressão) e compensador simplificado do Bebop, com regulador de altitude
 5. **Integração** — método de Euler para atualizar as poses dos robôs
+
+## Testes
+
+rosshutdown
+rosinit('<http://192.168.0.100:11311>')
+rostopic('list') % deve aparecer /natnet_ros/L1/pose
+sub = rossubscriber('/natnet_ros/L1/pose', 'geometry_msgs/PoseStamped');
+pause(2)
+[msg, ~, ~] = receive(sub, 10) % deve retornar em poucos segundos
+msg.Pose.Position
