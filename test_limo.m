@@ -18,6 +18,7 @@
 %  'monitor'    — só lê pose (mais seguro; primeiro teste)
 %  'teleop'     — joystick comanda v e ω
 %  'pulse'      — sequência curta (frente → parar → girar)
+%  'spin'       — gira no próprio eixo (v=0) por N voltas completas
 %  'lemniscate' — segue a lemniscata (figura-8) do enunciado no PoI do LIMO
 
 clear;
@@ -32,7 +33,7 @@ cfg.limo_namespace = 'L1';       % ATENÇÃO: L + número 1, não I (i maiúscul
 cfg.pose_topic_prefix = '/natnet_ros';
 
 cfg.T = 1 / 30;                  % 30 Hz
-cfg.mode = 'monitor';            % 'monitor' | 'teleop' | 'pulse' | 'lemniscate'
+cfg.mode = 'monitor';            % 'monitor' | 'teleop' | 'pulse' | 'spin' | 'lemniscate'
 cfg.t_final = 80;                % duração no modo lemniscate (s); 80 s = 2 períodos de 40 s
 
 cfg.a1 = 0.10;                   % PoI do LIMO (m)
@@ -54,6 +55,10 @@ cfg.joystick_stop_button = 1;    % botão digital -> parar e sair
 cfg.pulse_linear_speed = 0.15;   % m/s
 cfg.pulse_angular_speed = 0.25;  % rad/s
 cfg.pulse_duration = 2.0;        % s por etapa
+
+% Rotação no próprio eixo (modo 'spin')
+cfg.spin_angular_speed = 0.25;   % rad/s (+ anti-horário, − horário)
+cfg.spin_turns = 1.0;            % voltas completas (360°); sinal = sentido
 
 % Obstáculo (modo lemniscate — mesmo do enunciado)
 cfg.obstacle_center = [-0.20; 0.425];
@@ -105,9 +110,12 @@ end
 J = JoyControl;
 fprintf('Joystick conectado.\n');
 
-if strcmp(cfg.mode, 'pulse') || strcmp(cfg.mode, 'lemniscate')
+if strcmp(cfg.mode, 'pulse') || strcmp(cfg.mode, 'spin') || strcmp(cfg.mode, 'lemniscate')
     if strcmp(cfg.mode, 'pulse')
         msg = 'Modo pulse: o LIMO fará movimentos curtos.';
+    elseif strcmp(cfg.mode, 'spin')
+        msg = sprintf(['Modo spin: o LIMO girará no próprio eixo (v=0) ', ...
+            'por %.1f volta(s) a %.2f rad/s.'], cfg.spin_turns, cfg.spin_angular_speed);
     else
         msg = sprintf(['Modo lemniscate: o PoI do LIMO seguirá a figura-8 ', ...
             'por %.0f s.\n  Referência: xd=0.75*sin(2πt/40), yd=0.75*sin(4πt/40)'], cfg.t_final);
@@ -121,6 +129,8 @@ t0 = tic;
 running = true;
 pulse_state = 'idle';
 pulse_timer = 0;
+spin_yaw_prev = [];
+spin_angle_accum = 0.0;
 log_counter = 0;
 hist_t = [];
 hist_poi = [];
@@ -170,6 +180,10 @@ try
                 [v_cmd, w_cmd, pulse_state, pulse_timer, running] = pulse_step( ...
                     t, pulse_state, pulse_timer, running, cfg);
 
+            case 'spin'
+                [v_cmd, w_cmd, spin_yaw_prev, spin_angle_accum, running] = spin_step( ...
+                    psi1, spin_yaw_prev, spin_angle_accum, running, cfg);
+
             case 'lemniscate'
                 [v_cmd, w_cmd, ref_xy, err_xy] = lemniscate_control(t, poi, psi1, cfg);
                 hist_t(end + 1, 1) = t; %#ok<AGROW>
@@ -192,6 +206,9 @@ try
             if strcmp(cfg.mode, 'lemniscate')
                 fprintf('t=%5.1fs | PoI=(%+.3f,%+.3f) ref=(%+.3f,%+.3f) err=%+.3f m | v=%+.2f w=%+.2f\n', ...
                     t, poi(1), poi(2), ref_xy(1), ref_xy(2), norm(err_xy), v_cmd, w_cmd);
+            elseif strcmp(cfg.mode, 'spin')
+                fprintf('t=%5.1fs | x=%+.3f y=%+.3f yaw=%+6.1f° | giro=%+.1f° | v=%+.2f w=%+.2f\n', ...
+                    t, pos(1), pos(2), rad2deg(yaw), rad2deg(spin_angle_accum), v_cmd, w_cmd);
             else
                 fprintf('t=%5.1fs | x=%+.3f y=%+.3f yaw=%+6.1f° | v=%+.2f w=%+.2f\n', ...
                     t, pos(1), pos(2), rad2deg(yaw), v_cmd, w_cmd);
@@ -427,6 +444,43 @@ function [v, w, state, timer, running] = pulse_step(t, state, timer, running, cf
 
         case 'done'
             running = false;
+    end
+end
+
+function [v, w, yaw_prev, angle_accum, running] = spin_step(psi, yaw_prev, angle_accum, running, cfg)
+    v = 0.0;
+
+    turn_sign = sign(cfg.spin_turns);
+    if turn_sign == 0.0
+        turn_sign = sign(cfg.spin_angular_speed);
+        if turn_sign == 0.0
+            turn_sign = 1.0;
+        end
+    end
+    w = turn_sign * clamp_scalar(abs(cfg.spin_angular_speed), cfg.w_max);
+
+    if isempty(yaw_prev)
+        yaw_prev = psi;
+        fprintf('[spin] Início — alvo: %.1f volta(s), w=%+.2f rad/s\n', ...
+            cfg.spin_turns, w);
+        return;
+    end
+
+    delta = wrapToPi(psi - yaw_prev);
+    angle_accum = angle_accum + delta;
+    yaw_prev = psi;
+
+    target_rad = abs(cfg.spin_turns) * 2.0 * pi;
+    if target_rad <= 0.0
+        return;
+    end
+
+    if abs(angle_accum) >= target_rad
+        v = 0.0;
+        w = 0.0;
+        running = false;
+        fprintf('[spin] Concluído: %.1f° acumulados (%.2f volta(s)).\n', ...
+            rad2deg(angle_accum), angle_accum / (2.0 * pi));
     end
 end
 
