@@ -60,6 +60,7 @@ cfg.obstacle_center = [-0.20; 0.425];
 cfg.obstacle_radius = 0.15;
 cfg.obstacle_influence = 0.50;
 cfg.use_obstacle_avoidance = true;
+cfg.pose_timeout = 30;           % segundos aguardando primeira pose
 
 fprintf('=== Teste LIMO | modo: %s ===\n', cfg.mode);
 fprintf('Botão %d: parar e encerrar.\n', cfg.joystick_stop_button);
@@ -82,18 +83,10 @@ J = JoyControl;
 
 %% Aguardar primeira pose
 pose_topic = sprintf('%s/%s/pose', cfg.pose_topic_prefix, cfg.limo_namespace);
-fprintf('Aguardando pose do OptiTrack em %s (timeout 30 s)...\n', pose_topic);
+fprintf('Aguardando pose do OptiTrack em %s (timeout %d s)...\n', ...
+    pose_topic, cfg.pose_timeout);
 
-pose_ok = false;
-pos = [0; 0; 0];
-yaw = 0;
-
-try
-    [pose_msg, ~, ~] = receive(sub_pose, 30);
-    [pos, yaw, pose_ok] = parse_pose_stamped(pose_msg);
-catch
-    pose_ok = false;
-end
+[pos, yaw, pose_ok, pose_info] = wait_for_limo_pose(sub_pose, pose_topic, cfg.pose_timeout);
 
 if pose_ok
     fprintf('Pose OK: x=%.3f y=%.3f yaw=%.1f deg\n', pos(1), pos(2), rad2deg(yaw));
@@ -101,11 +94,14 @@ else
     send_zero_cmd(msg_cmdvel, pub_cmdvel);
     rosshutdown;
     error(['Não foi possível ler pose do LIMO em %s.\n\n', ...
+        'Diagnóstico: %s\n\n', ...
         'Verifique:\n', ...
-        '  1) cfg.limo_namespace = ''L1'' (letra L, não I)\n', ...
-        '  2) natnet_ros rodando no rosserver\n', ...
-        '  3) corpo rígido L1 visível no Motive\n', ...
-        '  4) no terminal ROS: rostopic echo %s\n'], pose_topic, pose_topic);
+        '  1) natnet_ros rodando no rosserver (.100)\n', ...
+        '  2) L1 visível no Motive (marcadores ativos)\n', ...
+        '  3) No rosserver: rostopic echo %s\n', ...
+        '  4) No MATLAB (após rosinit): rostopic(''list'') deve listar %s\n', ...
+        '  5) PC do MATLAB (.101) na mesma rede; ROS_IP = IP deste PC\n'], ...
+        pose_topic, pose_info, pose_topic, pose_topic);
 end
 
 if strcmp(cfg.mode, 'pulse') || strcmp(cfg.mode, 'lemniscate')
@@ -285,6 +281,68 @@ function pressed = is_stop_pressed(Digital, button_index)
     if button_index >= 1 && numel(Digital) >= button_index
         pressed = logical(Digital(button_index));
     end
+end
+
+function [position, yaw, ok, info] = wait_for_limo_pose(sub_pose, pose_topic, timeout_sec)
+    ok = false;
+    position = [0.0; 0.0; 0.0];
+    yaw = 0.0;
+    info = '';
+
+    pause(2.0);
+
+    topics = list_ros_topics();
+    natnet_topics = topics(contains(topics, 'natnet_ros'));
+    if isempty(natnet_topics)
+        info = 'Nenhum tópico /natnet_ros/* visível no master.';
+    elseif ~any(strcmp(topics, pose_topic))
+        info = sprintf('Tópico %s ausente. natnet disponíveis: %s', ...
+            pose_topic, strjoin(natnet_topics, ', '));
+    else
+        info = sprintf('Tópico %s listado no master.', pose_topic);
+    end
+
+    try
+        [pose_msg, ~, ~] = receive(sub_pose, timeout_sec);
+        [position, yaw, ok] = parse_pose_stamped(pose_msg);
+        if ok
+            info = [info, ' Mensagem recebida via receive().'];
+            return;
+        end
+        info = [info, ' receive() retornou mensagem inválida.'];
+    catch ME
+        info = [info, ' receive() falhou: ', ME.message];
+    end
+
+    deadline = tic;
+    while toc(deadline) < timeout_sec
+        [position, yaw, ok] = read_optitrack_pose(sub_pose);
+        if ok
+            info = [info, ' Mensagem recebida via LatestMessage.'];
+            return;
+        end
+        pause(0.25);
+    end
+
+    info = [info, sprintf(' Sem dados por %.0f s.', timeout_sec)];
+end
+
+function topics = list_ros_topics()
+    topics = {};
+    try
+        topic_table = rosTopicList;
+        topics = topic_table.Name;
+    catch
+        try
+            topics = rostopic('list');
+        catch
+            topics = {};
+        end
+    end
+    if ischar(topics)
+        topics = {topics};
+    end
+    topics = topics(:);
 end
 
 function send_limo_cmd(msg, pub, v, w, differential)
