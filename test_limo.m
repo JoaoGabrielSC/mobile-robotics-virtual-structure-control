@@ -25,6 +25,9 @@
 %  '4wd'     — luzes amarelas; aceita v=0 + ω (giro no próprio eixo)
 %  'carlike' — luzes verdes; raio mínimo ~0.4 m (v acoplado a ω quando v≈0)
 %  'omni'    — LIMO 105 + use_mcnamu:=true; permite Linear.Y
+%  OBS.: o enunciado define o LIMO como "robô terrestre diferencial" —
+%  usar '4wd'. A lei de controle da lemniscata assume modelo uniciclo
+%  (v e w independentes), que só é válido em modo diferencial.
 
 clear;
 clc;
@@ -42,13 +45,26 @@ cfg.mode = 'monitor';            % 'monitor' | 'teleop' | 'pulse' | 'spin' | 'le
 cfg.t_final = 80;                % duração no modo lemniscate (s); 80 s = 2 períodos de 40 s
 
 cfg.a1 = 0.10;                   % PoI do LIMO (m)
-cfg.kq = 1.2;                    % ganho proporcional (modo lemniscate)
-cfg.lq = 0.8;                    % saturação tanh (modo lemniscate)
+cfg.kq = 1.2;                    % ganho proporcional (laço externo, modo lemniscate)
+cfg.lq = 0.30;                   % saturação tanh (m/s) — reduzido em relação ao
+                                  % main.m (0.8): com a1=0.10 a conversão p/ (v,w)
+                                  % amplifica por 1/a1 a componente transversal, e
+                                  % 0.8 m/s exigiria w muito acima do fisicamente ok
+
+% Compensador dinâmico do LIMO (laço interno) — parâmetros do enunciado
+cfg.theta_limo = [0.1521; 0.0953; 0.0031; 0.9840; -0.0451; 1.6422];
+cfg.kd_limo = 4.0;               % ganho do compensador dinâmico
 
 % Limites conservadores para teste no lab
 cfg.v_max = 0.30;                % m/s
-cfg.w_max = 0.50;                % rad/s
-cfg.limo_steering_mode = 'carlike';  % '4wd' | 'carlike' | 'omni'
+cfg.w_max = 1.20;                % rad/s (era 0.50 — insuficiente p/ o transiente
+                                  % inicial + 1/a1; ajuste conforme validado em bancada)
+cfg.limo_steering_mode = '4wd';  % '4wd' | 'carlike' | 'omni'
+                                  % ATENÇÃO: enunciado descreve o LIMO como robô
+                                  % diferencial. Em 'carlike' o robô não gira no
+                                  % próprio eixo e a lei de controle (que assume
+                                  % modelo uniciclo) fica incoerente com a
+                                  % cinemática real, distorcendo a trajetória.
 cfg.ackermann_min_radius = 0.40;     % m (manual AgileX; modo car-like)
 
 % Joystick (JoyControl) — ajuste os índices se necessário
@@ -156,6 +172,7 @@ hist_t = [];
 hist_poi = [];
 hist_ref = [];
 hist_error_xy = [];
+v_limo_state = [0.0; 0.0];       % estado interno do compensador dinâmico [v; w]
 
 try
     while running
@@ -205,7 +222,10 @@ try
                     psi1, spin_yaw_prev, spin_angle_accum, running, cfg);
 
             case 'lemniscate'
-                [v_cmd, w_cmd, ref_xy, err_xy] = lemniscate_control(t, poi, psi1, cfg);
+                [v_d, ref_xy, err_xy] = lemniscate_outer_loop(t, poi, psi1, cfg);
+                v_limo_state = limo_inner_loop(v_d, v_limo_state, cfg);
+                v_cmd = v_limo_state(1);
+                w_cmd = v_limo_state(2);
                 hist_t(end + 1, 1) = t; %#ok<AGROW>
                 hist_poi(:, end + 1) = poi; %#ok<AGROW>
                 hist_ref(:, end + 1) = ref_xy; %#ok<AGROW>
@@ -528,7 +548,11 @@ function [ref_xy, ref_xy_dot] = lemniscata_reference(t)
                   0.75 * (4.0 * pi / 40.0) * cos(phase_y)];
 end
 
-function [v_cmd, w_cmd, ref_xy, err_xy] = lemniscate_control(t, poi, psi, cfg)
+function [v_d, ref_xy, err_xy] = lemniscate_outer_loop(t, poi, psi, cfg)
+    % Laço externo: controlador cinemático da formação (PoI do LIMO
+    % rastreando a lemniscata) + desvio de obstáculo em espaço nulo +
+    % inversão do jacobiano do ponto de interesse (A1). Retorna a
+    % velocidade de referência v_d=[v;w] já saturada nos limites físicos.
     [ref_xy, ref_xy_dot] = lemniscata_reference(t);
     err_xy = ref_xy - poi;
 
@@ -542,8 +566,32 @@ function [v_cmd, w_cmd, ref_xy, err_xy] = lemniscate_control(t, poi, psi, cfg)
               -sin(psi) / cfg.a1, cos(psi) / cfg.a1];
     u = A1_inv * vel_poi;
 
-    v_cmd = clamp_scalar(u(1), cfg.v_max);
-    w_cmd = clamp_scalar(u(2), cfg.w_max);
+    v_d = [clamp_scalar(u(1), cfg.v_max); clamp_scalar(u(2), cfg.w_max)];
+end
+
+function v_state = limo_inner_loop(v_d, v_state, cfg)
+    % Laço interno: compensador dinâmico do LIMO (regressão linear nos
+    % parâmetros theta_limo do enunciado), integrado a T=1/30 s. v_state
+    % é o estado interno [v; w] usado como referência de velocidade
+    % suavizada, coerente com a dinâmica real do robô, enviada ao cmd_vel.
+    u_real = v_state(1);
+    w_real = v_state(2);
+
+    Y1 = [u_real, 0.0, w_real^2, 0.0, 0.0, 0.0; ...
+          0.0, w_real, 0.0, u_real, u_real * w_real, w_real];
+
+    KD = diag([cfg.kd_limo, cfg.kd_limo]);
+    u_control = Y1 * cfg.theta_limo + KD * (v_d - v_state);
+
+    M1 = [cfg.theta_limo(1), 0.0; 0.0, cfg.theta_limo(2)];
+    C1 = [cfg.theta_limo(4) * u_real, cfg.theta_limo(3) * w_real; ...
+          cfg.theta_limo(5) * u_real + cfg.theta_limo(6) * w_real, 0.0];
+
+    v_dot = M1 \ (u_control - C1 * v_state);
+    v_state = v_state + cfg.T * v_dot;
+
+    v_state(1) = clamp_scalar(v_state(1), cfg.v_max);
+    v_state(2) = clamp_scalar(v_state(2), cfg.w_max);
 end
 
 function vel_xy = apply_obstacle_null_space_xy(vel_xy, poi, cfg)
