@@ -12,7 +12,7 @@ AMPLITUDE = 0.75
 PERIOD = 40.0  # s — one full figure-8 cycle
 OBSTACLE_CENTER = np.array([-0.20, 0.425])
 OBSTACLE_RADIUS = 0.15
-OBSTACLE_INFLUENCE = 0.50
+DEFAULT_OBSTACLE_INFLUENCE_RADIUS = 0.50
 LIMO_IC = np.array([0.40, -0.25])  # enunciado — centro do chassi
 POI_OFFSET = 0.10  # m — PoI à frente do LIMO (yaw=0 na CI)
 
@@ -37,11 +37,13 @@ def distance_to_obstacle(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     return np.hypot(x - OBSTACLE_CENTER[0], y - OBSTACLE_CENTER[1])
 
 
-def apply_obstacle_null_space_xy(vel_xy: np.ndarray, poi_xy: np.ndarray) -> np.ndarray:
+def apply_obstacle_null_space_xy(
+    vel_xy: np.ndarray, poi_xy: np.ndarray, influence_r: float
+) -> np.ndarray:
     """Same law as test_limo.m / simulator.py (PoI XY subspace)."""
     offset = poi_xy - OBSTACLE_CENTER
     distance = float(np.linalg.norm(offset))
-    if distance >= OBSTACLE_INFLUENCE or distance <= 1e-6:
+    if distance >= influence_r or distance <= 1e-6:
         return vel_xy.copy()
 
     direction = offset / distance
@@ -52,7 +54,7 @@ def apply_obstacle_null_space_xy(vel_xy: np.ndarray, poi_xy: np.ndarray) -> np.n
         obstacle_rate = 0.8
     else:
         obstacle_rate = 0.4 * (
-            1.0 / clearance - 1.0 / (OBSTACLE_INFLUENCE - OBSTACLE_RADIUS)
+            1.0 / clearance - 1.0 / (influence_r - OBSTACLE_RADIUS)
         )
 
     primary = (j_obs_pinv * obstacle_rate).reshape(2)
@@ -61,7 +63,7 @@ def apply_obstacle_null_space_xy(vel_xy: np.ndarray, poi_xy: np.ndarray) -> np.n
 
 
 def simulate_poi_with_avoidance(
-    t: np.ndarray, kq: float, lq: float, dt: float
+    t: np.ndarray, kq: float, lq: float, influence_r: float
 ) -> tuple[np.ndarray, np.ndarray]:
     """Integrate PoI tracking + null-space avoidance (kinematic preview)."""
     poi = LIMO_IC + np.array([POI_OFFSET, 0.0])  # yaw ≈ 0 at IC
@@ -73,7 +75,7 @@ def simulate_poi_with_avoidance(
         vxref, vyref = lemniscate_velocity(np.array([ti]))
         err = np.array([xref[0] - poi[0], yref[0] - poi[1]])
         vel = np.array([vxref[0], vyref[0]]) + lq * np.tanh((kq / lq) * err)
-        vel = apply_obstacle_null_space_xy(vel, poi)
+        vel = apply_obstacle_null_space_xy(vel, poi, influence_r)
         if i + 1 < len(t):
             poi = poi + vel * (t[i + 1] - ti)
     return xs, ys
@@ -114,6 +116,12 @@ def parse_args() -> argparse.Namespace:
         help="Where to save PNG",
     )
     parser.add_argument(
+        "--obstacle-influence-radius",
+        type=float,
+        default=0.50,
+        help="Raio da zona de influência do obstáculo (m)",
+    )
+    parser.add_argument(
         "--no-show",
         action="store_true",
         help="Save only; do not open interactive window",
@@ -128,12 +136,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    influence_r = args.obstacle_influence_radius
     t = np.arange(0.0, args.t_final + args.dt / 2, args.dt)
     x_ref, y_ref = lemniscate_xy(t)
     dist = distance_to_obstacle(x_ref, y_ref)
 
     min_idx = int(np.argmin(dist))
-    in_influence = dist < OBSTACLE_INFLUENCE
+    in_influence = dist < influence_r
     in_collision = dist < OBSTACLE_RADIUS
 
     print("=== Trajetória de referência (lemniscata de Bernoulli) ===")
@@ -144,7 +153,7 @@ def main() -> None:
     print()
     print("=== Obstáculo ===")
     print(f"  Centro: ({OBSTACLE_CENTER[0]:.2f}, {OBSTACLE_CENTER[1]:.2f}) m")
-    print(f"  Raio: {OBSTACLE_RADIUS:.2f} m | Influência: {OBSTACLE_INFLUENCE:.2f} m")
+    print(f"  Raio: {OBSTACLE_RADIUS:.2f} m | Influência: {influence_r:.2f} m")
     print()
     print("=== Referência vs obstáculo (PoI desejado) ===")
     print(
@@ -152,7 +161,7 @@ def main() -> None:
     )
     print(f"  Ponto mais próximo: ({x_ref[min_idx]:+.3f}, {y_ref[min_idx]:+.3f}) m")
     print(
-        f"  Entra na zona de influência (0.5 m)? {'Sim' if np.any(in_influence) else 'Não'}"
+        f"  Entra na zona de influência ({influence_r:.2f} m)? {'Sim' if np.any(in_influence) else 'Não'}"
     )
     print(
         f"  Cruza o disco do obstáculo (0.15 m)? {'Sim' if np.any(in_collision) else 'Não'}"
@@ -172,13 +181,13 @@ def main() -> None:
     def draw_obstacle(ax: plt.Axes) -> None:
         influence = Circle(
             OBSTACLE_CENTER,
-            OBSTACLE_INFLUENCE,
+            influence_r,
             fill=False,
             linestyle="--",
             edgecolor="#78716c",
             linewidth=1.5,
             alpha=0.7,
-            label=f"Influência ({OBSTACLE_INFLUENCE} m)",
+            label=f"Influência ({influence_r} m)",
         )
         obstacle = Circle(
             OBSTACLE_CENTER,
@@ -226,7 +235,7 @@ def main() -> None:
 
     # --- Right: kinematic preview with null-space ---
     if not args.no_preview:
-        x_poi, y_poi = simulate_poi_with_avoidance(t, args.kq, args.lq, args.dt)
+        x_poi, y_poi = simulate_poi_with_avoidance(t, args.kq, args.lq, influence_r)
         ax_prev = axes[1]
         draw_obstacle(ax_prev)
         ax_prev.plot(x_ref, y_ref, "r--", linewidth=1.2, alpha=0.5, label="Referência")
