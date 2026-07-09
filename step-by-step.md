@@ -25,6 +25,154 @@ flowchart TD
 
 ---
 
+## Infraestrutura do lab (rede + comandos)
+
+Mapa dos equipamentos e de **onde** rodar cada comando (conforme [`refence.m`](refence.m)):
+
+```mermaid
+flowchart LR
+    subgraph motivePC ["PC Motive (.101)"]
+        Motive["Motive\nOptiTrack"]
+    end
+
+    subgraph rosServer ["Servidor ROS (.100)"]
+        Master["roscore\n:11311"]
+        NatNet["natnet_ros"]
+        CF["crazyflie_server"]
+    end
+
+    subgraph matlabPC ["PC MATLAB (.101)"]
+        MATLAB["MATLAB\nmain.m / test_limo.m"]
+    end
+
+    subgraph limoOnboard ["LIMO onboard (.104)"]
+        LimoNode["limo_base\nnamespace L1"]
+    end
+
+    Motive -->|"NatNet UDP"| NatNet
+    NatNet --> Master
+    CF --> Master
+    LimoNode -->|"registra no master"| Master
+    MATLAB -->|"rosinit :11311"| Master
+    MATLAB -->|"/L1/cmd_vel"| LimoNode
+    MATLAB -->|"/cfX/cmd_vel"| CF
+    NatNet -->|"/natnet_ros/L1/pose"| MATLAB
+    NatNet -->|"/natnet_ros/cfX/pose"| MATLAB
+```
+
+### Sequência de boot — ordem e comandos
+
+Siga esta ordem **antes** de abrir o MATLAB. Os passos 3 e 4 podem ser feitos em paralelo.
+
+```mermaid
+sequenceDiagram
+    participant M as Motive (.101)
+    participant R as Servidor ROS (.100)
+    participant L as LIMO (.104)
+    participant C as Crazyflie
+    participant ML as MATLAB (.101)
+
+    Note over M: Passo 1 — corpos rígidos
+    M->>M: Criar L1 e cfX no Motive
+
+    Note over R: Passo 2 — OptiTrack → ROS
+    R->>R: roslaunch natnet_ros_cpp natnet_ros.launch
+
+    par Passo 3 — Drone (opcional p/ test_limo)
+        R->>C: Ligar Crazyflie
+        R->>R: roslaunch crazyflie_server crazyflie_server.launch cfs:=X
+    and Passo 4 — LIMO
+        L->>L: Ligar LIMO + conferir luzes
+        L->>L: ssh agilex@192.168.0.104
+        L->>L: roslaunch limo_base limo_base.launch namespace:=L1
+    end
+
+    Note over ML: Passo 5+ — Controle
+    ML->>ML: rosshutdown
+    ML->>R: rosinit http://192.168.0.100:11311
+    ML->>R: subscribers + publishers
+    opt Formação completa (main.m)
+        ML->>R: call /cfX/takeoff
+        ML->>R: loop 30 Hz cmd_vel
+    end
+    opt Só LIMO (test_limo.m)
+        ML->>R: loop 30 Hz /L1/cmd_vel
+    end
+```
+
+### Fluxo por cenário
+
+```mermaid
+flowchart TD
+    Start([Início do experimento]) --> Motive[Passo 1: Motive\nL1 + cfX]
+
+    Motive --> NatNet[Passo 2: Servidor .100\nroslaunch natnet_ros_cpp natnet_ros.launch]
+
+    NatNet --> Choice{Cenário?}
+
+    Choice -->|test_limo.m| LimoOnly[Passo 4: LIMO\nssh agilex@192.168.0.104\nroslaunch limo_base ... namespace:=L1]
+    Choice -->|main.m| Both[Passo 3 + 4 em paralelo]
+
+    Both --> CF[Passo 3: Servidor .100\nroslaunch crazyflie_server ... cfs:=X]
+    Both --> LimoFull[Passo 4: LIMO\nssh + limo_base.launch]
+
+    LimoOnly --> MatlabTest[MATLAB: test_limo]
+    CF --> MatlabMain[MATLAB: main]
+    LimoFull --> MatlabMain
+
+    MatlabTest --> VerifyTest{Pose OK?\n/natnet_ros/L1/pose}
+    MatlabMain --> Takeoff[Takeoff cfX]
+    Takeoff --> VerifyMain{Poses OK?\nL1 + cfX}
+
+    VerifyTest -->|Sim| RunTest[monitor → teleop → spin → lemniscate]
+    VerifyTest -->|Não| FixInfra[Conferir passos 1–2–4]
+    VerifyMain -->|Sim| RunMain[Loop formação 30 Hz]
+    VerifyMain -->|Não| FixInfra
+
+    RunTest --> Shutdown[vel=0 + rosshutdown]
+    RunMain --> EndNormal[vel=0 + land + rosshutdown]
+    RunMain --> EndKill[kill + rosshutdown]
+```
+
+### Comandos rápidos por máquina
+
+| Onde | Comando | Quando |
+|------|---------|--------|
+| **Servidor ROS** `.100` | `roslaunch natnet_ros_cpp natnet_ros.launch` | Sempre (passo 2) |
+| **Servidor ROS** `.100` | `roslaunch crazyflie_server crazyflie_server.launch cfs:=[7]` | Só `main.m` (passo 3) |
+| **LIMO** `.104` (SSH) | `ssh agilex@192.168.0.104` → senha `agx` | Sempre que usar LIMO (passo 4) |
+| **LIMO** `.104` (SSH) | `roslaunch limo_base limo_base.launch namespace:=L1` | Padrão 4WD / car-like |
+| **LIMO** `.104` (SSH) | `... use_mcnamu:=true` | Omni (só LIMO 105) |
+| **MATLAB** `.101` | `rosinit('http://192.168.0.100:11311')` | Antes do loop (`main.m` / `test_limo.m` fazem sozinhos) |
+
+**Verificação rápida no servidor ROS:**
+
+```bash
+rostopic list | grep -E "natnet_ros|L1|cf"
+rostopic echo /natnet_ros/L1/pose
+```
+
+**LIMO — luzes antes do launch** ([`refence.m`](refence.m)):
+
+```mermaid
+flowchart LR
+    subgraph modes [Modo mecânico]
+        Yellow["Amarela\n4WD"]
+        Green["Verde\ncar-like"]
+        Blue["Azul\nomni LIMO 105"]
+    end
+
+    Yellow --> Launch4wd["limo_base.launch\nnamespace:=L1"]
+    Green --> LaunchCar["limo_base.launch\nnamespace:=L1"]
+    Blue --> LaunchOmni["limo_base.launch\nuse_mcnamu:=true"]
+
+    Launch4wd --> Matlab4wd["cfg.limo_steering_mode = '4wd'"]
+    LaunchCar --> MatlabCar["cfg.limo_steering_mode = 'carlike'"]
+    LaunchOmni --> MatlabOmni["cfg.limo_steering_mode = 'omni'"]
+```
+
+---
+
 ## Fase 1 — Antes de rodar o MATLAB
 
 ### Passo 1 — Configurar corpos rígidos no Motive (OptiTrack)

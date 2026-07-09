@@ -89,6 +89,10 @@ cfg.obstacle_influence = 0.50;
 cfg.use_obstacle_avoidance = true;
 cfg.pose_timeout = 30;           % segundos aguardando primeira pose
 
+% Salvamento automático de resultados (modo lemniscate)
+cfg.save_results = true;
+cfg.results_dir = fullfile('results', 'test_limo');
+
 fprintf('=== Teste LIMO | modo: %s | steering: %s ===\n', ...
     cfg.mode, cfg.limo_steering_mode);
 fprintf('Botão %d: parar e encerrar.\n', cfg.joystick_stop_button);
@@ -270,31 +274,7 @@ pause(0.5);
 rosshutdown;
 
 if strcmp(cfg.mode, 'lemniscate') && ~isempty(hist_t)
-    figure('Name', 'Teste lemniscate - LIMO');
-    plot(hist_ref(1, :), hist_ref(2, :), 'r--', 'LineWidth', 1.5, 'DisplayName', 'Referência');
-    hold on;
-    plot(hist_poi(1, :), hist_poi(2, :), 'b-', 'LineWidth', 1.2, 'DisplayName', 'PoI LIMO');
-    plot(hist_poi(1, 1), hist_poi(2, 1), 'go', 'MarkerSize', 8, 'DisplayName', 'Início');
-    plot(hist_poi(1, end), hist_poi(2, end), 'ks', 'MarkerSize', 8, 'DisplayName', 'Fim');
-    axis equal;
-    grid on;
-    xlabel('X (m)');
-    ylabel('Y (m)');
-    title('Lemniscata de Bernoulli — PoI do LIMO');
-    legend('Location', 'best');
-
-    figure('Name', 'Erro XY - lemniscate');
-    plot(hist_t, hist_error_xy(1, :), 'r', 'DisplayName', 'Erro X');
-    hold on;
-    plot(hist_t, hist_error_xy(2, :), 'g', 'DisplayName', 'Erro Y');
-    grid on;
-    xlabel('Tempo (s)');
-    ylabel('Erro (m)');
-    legend('Location', 'best');
-    title('Erro de rastreamento da figura-8');
-
-    rms_xy = sqrt(mean(sum(hist_error_xy.^2, 1)));
-    fprintf('Erro RMS de posição (PoI): %.3f m\n', rms_xy);
+    save_lemniscate_results(hist_t, hist_poi, hist_ref, hist_error_xy, cfg);
 end
 
 fprintf('Teste LIMO finalizado.\n');
@@ -619,4 +599,85 @@ end
 
 function y = clamp_scalar(x, limit)
     y = min(max(x, -limit), limit);
+end
+
+function save_lemniscate_results(hist_t, hist_poi, hist_ref, hist_error_xy, cfg)
+    if ~cfg.save_results
+        return;
+    end
+
+    stamp = datestr(now, 'yyyymmdd_HHMMSS');
+    out_dir = cfg.results_dir;
+    if ~exist(out_dir, 'dir')
+        mkdir(out_dir);
+    end
+
+    prefix = sprintf('lemniscate_%s_%s', cfg.mode, stamp);
+    traj_png = fullfile(out_dir, [prefix, '_traj.png']);
+    err_png = fullfile(out_dir, [prefix, '_error.png']);
+    mat_file = fullfile(out_dir, [prefix, '.mat']);
+
+    rms_xy = sqrt(mean(sum(hist_error_xy.^2, 1)));
+
+    fig_traj = figure('Name', 'Teste lemniscate - LIMO', 'Visible', 'off');
+    draw_obstacle_patches(gca, cfg);
+    hold on;
+    plot(hist_ref(1, :), hist_ref(2, :), 'r--', 'LineWidth', 1.5, 'DisplayName', 'Referência');
+    plot(hist_poi(1, :), hist_poi(2, :), 'b-', 'LineWidth', 1.2, 'DisplayName', 'PoI LIMO');
+    plot(hist_poi(1, 1), hist_poi(2, 1), 'go', 'MarkerSize', 8, 'DisplayName', 'Início');
+    plot(hist_poi(1, end), hist_poi(2, end), 'ks', 'MarkerSize', 8, 'DisplayName', 'Fim');
+    axis equal;
+    grid on;
+    xlabel('X (m)');
+    ylabel('Y (m)');
+    title(sprintf('Lemniscata — PoI LIMO (%s)', stamp));
+    legend('Location', 'best');
+    print(fig_traj, traj_png, '-dpng', '-r150');
+
+    fig_err = figure('Name', 'Erro XY - lemniscate', 'Visible', 'off');
+    plot(hist_t, hist_error_xy(1, :), 'r', 'DisplayName', 'Erro X');
+    hold on;
+    plot(hist_t, hist_error_xy(2, :), 'g', 'DisplayName', 'Erro Y');
+    plot(hist_t, vecnorm(hist_error_xy, 2, 1), 'k-', 'LineWidth', 1.2, 'DisplayName', '||erro||');
+    grid on;
+    xlabel('Tempo (s)');
+    ylabel('Erro (m)');
+    legend('Location', 'best');
+    title(sprintf('Erro de rastreamento (RMS=%.3f m)', rms_xy));
+    print(fig_err, err_png, '-dpng', '-r150');
+
+    results.meta.timestamp = stamp;
+    results.meta.mode = cfg.mode;
+    results.meta.steering_mode = cfg.limo_steering_mode;
+    results.meta.rms_xy = rms_xy;
+    results.hist_t = hist_t;
+    results.hist_poi = hist_poi;
+    results.hist_ref = hist_ref;
+    results.hist_error_xy = hist_error_xy;
+    results.cfg = cfg;
+    save(mat_file, '-struct', 'results');
+
+    close(fig_traj);
+    close(fig_err);
+
+    fprintf('Erro RMS de posição (PoI): %.3f m\n', rms_xy);
+    fprintf('Resultados salvos em %s:\n', out_dir);
+    fprintf('  %s\n', traj_png);
+    fprintf('  %s\n', err_png);
+    fprintf('  %s\n', mat_file);
+end
+
+function draw_obstacle_patches(ax, cfg)
+    theta = linspace(0, 2 * pi, 100);
+    cx = cfg.obstacle_center(1);
+    cy = cfg.obstacle_center(2);
+
+    patch(ax, cx + cfg.obstacle_influence * cos(theta), ...
+        cy + cfg.obstacle_influence * sin(theta), ...
+        [0.47, 0.45, 0.42], 'FaceAlpha', 0.08, 'EdgeColor', [0.47, 0.45, 0.42], ...
+        'LineStyle', '--', 'DisplayName', 'Zona influência');
+    patch(ax, cx + cfg.obstacle_radius * cos(theta), ...
+        cy + cfg.obstacle_radius * sin(theta), ...
+        [0.47, 0.45, 0.42], 'FaceAlpha', 0.45, 'EdgeColor', [0.35, 0.33, 0.30], ...
+        'DisplayName', 'Obstáculo');
 end
