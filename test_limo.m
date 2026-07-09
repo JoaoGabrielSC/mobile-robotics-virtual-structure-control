@@ -83,10 +83,17 @@ cfg.spin_angular_speed = 0.25;   % rad/s (+ anti-horário, − horário)
 cfg.spin_turns = 1.0;            % voltas completas (360°); sinal = sentido
 
 % Obstáculo (modo lemniscate — mesmo do enunciado)
+% Campo potencial repulsivo U = η·exp(-((dx/a)^n + (dy/b)^n)) em null-space.
 cfg.obstacle_center = [-0.20; 0.425];
 cfg.obstacle_radius = 0.15;              % raio físico do obstáculo (m)
-cfg.obstacle_influence_radius = 0.50;    % raio da zona de influência (m); null-space se PoI estiver mais perto do centro
-cfg.obstacle_influence = cfg.obstacle_influence_radius;  % alias legado (main.m)
+cfg.obstacle_influence_radius = 0.50;    % raio da zona de influência (m)
+cfg.obstacle_influence = cfg.obstacle_influence_radius;
+cfg.obstacle_potential_mode = 'exponential';  % 'exponential' | 'classic'
+cfg.obstacle_potential_gain = 0.80;           % η
+cfg.obstacle_potential_exponent = 2;          % n
+cfg.obstacle_potential_shape_a = [];          % vazio → (R_inf - R_obs)
+cfg.obstacle_potential_shape_b = [];          % vazio → (R_inf - R_obs)
+cfg.obstacle_potential_vmax = 0.80;           % teto |∇U| (m/s)
 cfg.use_obstacle_avoidance = true;
 
 % Cruzamento da lemniscata (centro da figura-8) — reduz oscilação no nó
@@ -595,6 +602,77 @@ function [kq_eff, lq_eff] = crossing_gain_scale(poi, cfg)
     lq_eff = cfg.lq * scale;
 end
 
+function vel_xy = apply_obstacle_null_space_xy(vel_xy, poi, cfg)
+    % Null-space: campo potencial repulsivo (prioridade) + tracking (secundário).
+    offset = poi - cfg.obstacle_center;
+    distance = norm(offset);
+    influence_r = obstacle_influence_radius(cfg);
+
+    if distance >= influence_r || distance <= 1e-6
+        return;
+    end
+
+    grad = obstacle_repulsive_gradient(offset, cfg);
+    grad_mag = norm(grad);
+    if grad_mag <= 1e-9
+        return;
+    end
+
+    task_dir = grad / grad_mag;
+    J_obs_pinv = task_dir;
+    primary_velocity = grad;
+    null_projector = eye(2) - J_obs_pinv * task_dir.';
+    vel_xy = primary_velocity + null_projector * vel_xy;
+end
+
+function grad = obstacle_repulsive_gradient(offset, cfg)
+    % Gradiente repulsivo -∇U (afasta do centro do obstáculo).
+    % Modos: 'exponential' (default) | 'classic' (1/clearance legado)
+    distance = norm(offset);
+    if distance <= 1e-9
+        grad = [0.0; 0.0];
+        return;
+    end
+
+    influence_r = obstacle_influence_radius(cfg);
+    direction = offset / distance;
+    clearance = distance - cfg.obstacle_radius;
+    gain = obstacle_potential_gain(cfg);
+    vmax = obstacle_potential_vmax(cfg);
+
+    if clearance <= 0.0
+        grad = direction * vmax;
+        return;
+    end
+
+    if strcmp(obstacle_potential_mode(cfg), 'classic')
+        d_max = influence_r - cfg.obstacle_radius;
+        grad = direction * gain * (1.0 / clearance - 1.0 / d_max);
+    else
+        dx = offset(1);
+        dy = offset(2);
+        a = obstacle_potential_shape_a(cfg, influence_r);
+        b = obstacle_potential_shape_b(cfg, influence_r);
+        n = obstacle_potential_exponent(cfg);
+
+        u = (dx / a)^n + (dy / b)^n;
+        exp_term = exp(-u);
+        scale = gain * exp_term * n;
+
+        if n == 2
+            grad = [scale * dx / (a^2); scale * dy / (b^2)];
+        else
+            grad = [scale * sign(dx) * abs(dx)^(n - 1) / (a^n); ...
+                    scale * sign(dy) * abs(dy)^(n - 1) / (b^n)];
+        end
+    end
+
+    grad_mag = norm(grad);
+    if grad_mag > vmax
+        grad = grad * (vmax / grad_mag);
+    end
+end
+
 function influence_r = obstacle_influence_radius(cfg)
     if isfield(cfg, 'obstacle_influence_radius') && ~isempty(cfg.obstacle_influence_radius)
         influence_r = cfg.obstacle_influence_radius;
@@ -602,6 +680,54 @@ function influence_r = obstacle_influence_radius(cfg)
         influence_r = cfg.obstacle_influence;
     else
         influence_r = 0.50;
+    end
+end
+
+function mode = obstacle_potential_mode(cfg)
+    if isfield(cfg, 'obstacle_potential_mode') && ~isempty(cfg.obstacle_potential_mode)
+        mode = lower(cfg.obstacle_potential_mode);
+    else
+        mode = 'exponential';
+    end
+end
+
+function gain = obstacle_potential_gain(cfg)
+    if isfield(cfg, 'obstacle_potential_gain') && ~isempty(cfg.obstacle_potential_gain)
+        gain = cfg.obstacle_potential_gain;
+    else
+        gain = 0.80;
+    end
+end
+
+function n = obstacle_potential_exponent(cfg)
+    if isfield(cfg, 'obstacle_potential_exponent') && ~isempty(cfg.obstacle_potential_exponent)
+        n = cfg.obstacle_potential_exponent;
+    else
+        n = 2;
+    end
+end
+
+function a = obstacle_potential_shape_a(cfg, influence_r)
+    if isfield(cfg, 'obstacle_potential_shape_a') && ~isempty(cfg.obstacle_potential_shape_a)
+        a = cfg.obstacle_potential_shape_a;
+    else
+        a = influence_r - cfg.obstacle_radius;
+    end
+end
+
+function b = obstacle_potential_shape_b(cfg, influence_r)
+    if isfield(cfg, 'obstacle_potential_shape_b') && ~isempty(cfg.obstacle_potential_shape_b)
+        b = cfg.obstacle_potential_shape_b;
+    else
+        b = influence_r - cfg.obstacle_radius;
+    end
+end
+
+function vmax = obstacle_potential_vmax(cfg)
+    if isfield(cfg, 'obstacle_potential_vmax') && ~isempty(cfg.obstacle_potential_vmax)
+        vmax = cfg.obstacle_potential_vmax;
+    else
+        vmax = 0.80;
     end
 end
 
@@ -628,30 +754,6 @@ function v_state = limo_inner_loop(v_d, v_state, cfg)
 
     v_state(1) = clamp_scalar(v_state(1), cfg.v_max);
     v_state(2) = clamp_scalar(v_state(2), cfg.w_max);
-end
-
-function vel_xy = apply_obstacle_null_space_xy(vel_xy, poi, cfg)
-    offset = poi - cfg.obstacle_center;
-    distance = norm(offset);
-    influence_r = obstacle_influence_radius(cfg);
-
-    if distance >= influence_r || distance <= 1e-6
-        return;
-    end
-
-    direction = offset / distance;
-    J_obs_pinv = direction;
-
-    clearance = distance - cfg.obstacle_radius;
-    if clearance <= 0.0
-        obstacle_rate = 0.8;
-    else
-        obstacle_rate = 0.4 * (1.0 / clearance - 1.0 / (influence_r - cfg.obstacle_radius));
-    end
-
-    primary_velocity = J_obs_pinv * obstacle_rate;
-    null_projector = eye(2) - J_obs_pinv * direction.';
-    vel_xy = primary_velocity + null_projector * vel_xy;
 end
 
 function y = clamp_scalar(x, limit)
@@ -728,7 +830,7 @@ function draw_obstacle_patches(ax, cfg)
     theta = linspace(0, 2 * pi, 100);
     cx = cfg.obstacle_center(1);
     cy = cfg.obstacle_center(2);
-    influence_r = obstacle_influence_radius(cfg);
+    influence_r = cfg.obstacle_influence_radius;
 
     patch(ax, cx + influence_r * cos(theta), ...
         cy + influence_r * sin(theta), ...
