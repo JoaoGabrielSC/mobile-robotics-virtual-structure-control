@@ -33,79 +33,92 @@ clear;
 clc;
 close all;
 
-%% Configuração — rede ROS
+%% ========================================================================
+%  CONFIGURAÇÃO — edite aqui antes de rodar
+%  ========================================================================
+
+% --- Modo de operação ---------------------------------------------------
+% 'monitor'    — só lê pose (primeiro teste; mais seguro)
+% 'teleop'     — joystick comanda v e ω
+% 'pulse'      — sequência curta (frente → parar → girar)
+% 'spin'       — gira N voltas (4WD: no eixo; car-like: curva mínima)
+% 'lemniscate' — PoI segue a figura-8 do enunciado
+cfg.mode = 'monitor';
+cfg.t_final = 80;                % duração do modo lemniscate (s); 80 = 2×40 s
+cfg.T = 1 / 30;                  % período de amostragem (30 Hz)
+cfg.pose_timeout = 30;           % timeout aguardando primeira pose (s)
+
+% --- Rede ROS -----------------------------------------------------------
 cfg.ros_master_host = '192.168.0.100';   % rosserver (roscore)
-cfg.ros_master_port = 11311;             % porta padrão do master
-cfg.limo_host = '192.168.0.104';         % onboard do LIMO (só SSH/launch; não usar no rosinit)
-cfg.limo_namespace = 'L1';       % ATENÇÃO: L + número 1, não I (i maiúsculo)
+cfg.ros_master_port = 11311;
+cfg.limo_host = '192.168.0.104';         % onboard LIMO (SSH/launch; não usar no rosinit)
+cfg.limo_namespace = 'L1';               % L + número 1, não I maiúsculo
 cfg.pose_topic_prefix = '/natnet_ros';
 
-cfg.T = 1 / 30;                  % 30 Hz
-cfg.mode = 'monitor';            % 'monitor' | 'teleop' | 'pulse' | 'spin' | 'lemniscate'
-cfg.t_final = 80;                % duração no modo lemniscate (s); 80 s = 2 períodos de 40 s
+% --- LIMO: cinemática e limites -----------------------------------------
+% steering: '4wd' (enunciado) | 'carlike' (Ackermann) | 'omni' (Mecanum)
+cfg.limo_steering_mode = '4wd';
+cfg.ackermann_min_radius = 0.40;         % m — só modo car-like (manual AgileX)
+cfg.a1 = 0.10;                           % offset PoI no eixo X do robô (m)
+cfg.v_max = 0.30;                        % limite |v| (m/s)
+cfg.w_max = 1.20;                        % limite |ω| (rad/s)
 
-cfg.a1 = 0.10;                   % PoI do LIMO (m)
-cfg.kq = 1.2;                    % ganho proporcional (laço externo, modo lemniscate)
-cfg.lq = 0.30;                   % saturação tanh (m/s) — reduzido em relação ao
-                                  % main.m (0.8): com a1=0.10 a conversão p/ (v,w)
-                                  % amplifica por 1/a1 a componente transversal, e
-                                  % 0.8 m/s exigiria w muito acima do fisicamente ok
+% --- Controle: lemniscata (laço externo) -------------------------------
+cfg.kq = 1.2;                            % ganho proporcional
+cfg.lq = 0.30;                           % saturação tanh (m/s); menor que main.m (0.8)
+                                         % pois 1/a1 amplifica a componente transversal
 
-% Compensador dinâmico do LIMO (laço interno) — parâmetros do enunciado
+% --- Controle: laço interno LIMO ----------------------------------------
 cfg.theta_limo = [0.1521; 0.0953; 0.0031; 0.9840; -0.0451; 1.6422];
-cfg.kd_limo = 4.0;               % ganho do compensador dinâmico
+cfg.kd_limo = 4.0;
 
-% Limites conservadores para teste no lab
-cfg.v_max = 0.30;                % m/s
-cfg.w_max = 1.20;                % rad/s (era 0.50 — insuficiente p/ o transiente
-                                  % inicial + 1/a1; ajuste conforme validado em bancada)
-cfg.limo_steering_mode = '4wd';  % '4wd' | 'carlike' | 'omni'
-                                  % ATENÇÃO: enunciado descreve o LIMO como robô
-                                  % diferencial. Em 'carlike' o robô não gira no
-                                  % próprio eixo e a lei de controle (que assume
-                                  % modelo uniciclo) fica incoerente com a
-                                  % cinemática real, distorcendo a trajetória.
-cfg.ackermann_min_radius = 0.40;     % m (manual AgileX; modo car-like)
-
-% Joystick (JoyControl) — ajuste os índices se necessário
-cfg.joystick_axis_linear = 2;    % eixo analógico -> velocidade linear
-cfg.joystick_axis_angular = 3;   % eixo analógico -> velocidade angular
-cfg.joystick_deadzone = 0.15;
-cfg.joystick_stop_button = 1;    % botão digital -> parar e sair
-
-% Sequência automática (modo 'pulse')
-cfg.pulse_linear_speed = 0.15;   % m/s
-cfg.pulse_angular_speed = 0.25;  % rad/s
-cfg.pulse_duration = 2.0;        % s por etapa
-
-% Rotação no próprio eixo (modo 'spin')
-cfg.spin_angular_speed = 0.25;   % rad/s (+ anti-horário, − horário)
-cfg.spin_turns = 1.0;            % voltas completas (360°); sinal = sentido
-
-% Obstáculo (modo lemniscate — mesmo do enunciado)
-% Campo potencial repulsivo U = η·exp(-((dx/a)^n + (dy/b)^n)) em null-space.
-cfg.obstacle_center = [-0.20; 0.425];
-cfg.obstacle_radius = 0.15;              % raio físico do obstáculo (m)
-cfg.obstacle_influence_radius = 0.50;    % raio da zona de influência (m)
+% --- Obstáculo e campo potencial (modo lemniscate) ----------------------
+% Geometria (enunciado): balde fixo no lab.
+cfg.obstacle_center = [-0.20; 0.425];     % centro [x; y] (m)
+cfg.obstacle_radius = 0.15;               % raio físico R_obs (m)
+cfg.obstacle_influence_radius = 0.50;     % raio da zona de influência R_inf (m)
 cfg.obstacle_influence = cfg.obstacle_influence_radius;
+cfg.use_obstacle_avoidance = true;        % false = só tracking, sem evasão
+
+% Campo potencial repulsivo em null-space (prioridade: obstáculo > tracking)
+% Modo 'exponential': U = η·exp(-((dx/a)^n + (dy/b)^n)), vel = -∇U
+% Modo 'classic':      lei legada ~ 1/clearance (compatível com main.m)
 cfg.obstacle_potential_mode = 'exponential';  % 'exponential' | 'classic'
-cfg.obstacle_potential_gain = 0.80;           % η
-cfg.obstacle_potential_exponent = 2;          % n
-cfg.obstacle_potential_shape_a = [];          % vazio → (R_inf - R_obs)
-cfg.obstacle_potential_shape_b = [];          % vazio → (R_inf - R_obs)
+cfg.obstacle_potential_gain = 0.80;           % η — amplitude da repulsão
+cfg.obstacle_potential_exponent = 2;          % n — expoente da exponencial
+cfg.obstacle_potential_shape_a = [];          % escala a (m); [] → R_inf - R_obs
+cfg.obstacle_potential_shape_b = [];          % escala b (m); [] → R_inf - R_obs
 cfg.obstacle_potential_vmax = 0.80;           % teto |∇U| (m/s)
-cfg.use_obstacle_avoidance = true;
 
-% Cruzamento da lemniscata (centro da figura-8) — reduz oscilação no nó
+% --- Cruzamento da lemniscata (centro da figura-8) ----------------------
+% Reduz oscilação no nó onde os dois ramos se cruzam.
 cfg.crossing_center = [0.0; 0.0];
-cfg.crossing_zone_radius = 0.28;         % raio (m) em que o feedback posicional é atenuado
-cfg.crossing_feedback_min = 0.20;        % fração mínima de kq/lq no centro (0 = só feedforward)
-cfg.crossing_cross_track_gain = 0.35;  % peso do erro perpendicular à tangente da referência
-cfg.pose_timeout = 30;           % segundos aguardando primeira pose
+cfg.crossing_zone_radius = 0.28;          % raio de atenuação (m)
+cfg.crossing_feedback_min = 0.20;         % fração mínima de kq/lq no centro
+cfg.crossing_cross_track_gain = 0.35;     % peso do erro perpendicular à tangente
 
-% Salvamento automático de resultados (modo lemniscate)
+% --- Joystick (JoyControl) ----------------------------------------------
+cfg.joystick_axis_linear = 2;
+cfg.joystick_axis_angular = 3;
+cfg.joystick_deadzone = 0.15;
+cfg.joystick_stop_button = 1;             % botão → parar e encerrar
+
+% --- Modo 'pulse' (sequência automática) --------------------------------
+cfg.pulse_linear_speed = 0.15;            % m/s
+cfg.pulse_angular_speed = 0.25;           % rad/s
+cfg.pulse_duration = 2.0;                 % s por etapa
+
+% --- Modo 'spin' (rotação) ----------------------------------------------
+cfg.spin_angular_speed = 0.25;            % rad/s (+ anti-horário)
+cfg.spin_turns = 1.0;                     % voltas completas (sinal = sentido)
+
+% --- Resultados (modo lemniscate) ---------------------------------------
 cfg.save_results = true;
 cfg.results_dir = fullfile('results', 'test_limo');
+
+%% ========================================================================
+%  Fim da configuração — não é necessário editar abaixo desta linha
+%  ========================================================================
 
 fprintf('=== Teste LIMO | modo: %s | steering: %s ===\n', ...
     cfg.mode, cfg.limo_steering_mode);
