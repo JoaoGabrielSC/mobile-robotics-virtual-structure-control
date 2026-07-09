@@ -115,6 +115,9 @@ cfg.spin_turns = 1.0;                     % voltas completas (sinal = sentido)
 % --- Resultados (modo lemniscate) ---------------------------------------
 cfg.save_results = true;
 cfg.results_dir = fullfile('results', 'test_limo');
+cfg.save_gif = true;                      % animação GIF da trajetória
+cfg.gif_fps = 10;                         % taxa de reprodução do GIF (frames/s)
+cfg.gif_frame_step = 3;                   % usa 1 a cada N amostras (30 Hz → step 3 ≈ 10 Hz)
 
 %% ========================================================================
 %  Fim da configuração — não é necessário editar abaixo desta linha
@@ -203,6 +206,7 @@ hist_t = [];
 hist_poi = [];
 hist_ref = [];
 hist_error_xy = [];
+hist_limo = [];                  % [x; y; psi] do chassi (OptiTrack)
 v_limo_state = [0.0; 0.0];       % estado interno do compensador dinâmico [v; w]
 
 try
@@ -261,6 +265,7 @@ try
                 hist_poi(:, end + 1) = poi; %#ok<AGROW>
                 hist_ref(:, end + 1) = ref_xy; %#ok<AGROW>
                 hist_error_xy(:, end + 1) = err_xy; %#ok<AGROW>
+                hist_limo(:, end + 1) = [x1; y1; psi1]; %#ok<AGROW>
                 if t >= cfg.t_final
                     fprintf('Tempo final (%.0f s) atingido.\n', cfg.t_final);
                     running = false;
@@ -301,7 +306,7 @@ pause(0.5);
 rosshutdown;
 
 if strcmp(cfg.mode, 'lemniscate') && ~isempty(hist_t)
-    save_lemniscate_results(hist_t, hist_poi, hist_ref, hist_error_xy, cfg);
+    save_lemniscate_results(hist_t, hist_poi, hist_ref, hist_error_xy, hist_limo, cfg);
 end
 
 fprintf('Teste LIMO finalizado.\n');
@@ -773,7 +778,7 @@ function y = clamp_scalar(x, limit)
     y = min(max(x, -limit), limit);
 end
 
-function save_lemniscate_results(hist_t, hist_poi, hist_ref, hist_error_xy, cfg)
+function save_lemniscate_results(hist_t, hist_poi, hist_ref, hist_error_xy, hist_limo, cfg)
     if ~cfg.save_results
         return;
     end
@@ -787,6 +792,7 @@ function save_lemniscate_results(hist_t, hist_poi, hist_ref, hist_error_xy, cfg)
     prefix = sprintf('lemniscate_%s_%s', cfg.mode, stamp);
     traj_png = fullfile(out_dir, [prefix, '_traj.png']);
     err_png = fullfile(out_dir, [prefix, '_error.png']);
+    gif_file = fullfile(out_dir, [prefix, '_anim.gif']);
     mat_file = fullfile(out_dir, [prefix, '.mat']);
 
     rms_xy = sqrt(mean(sum(hist_error_xy.^2, 1)));
@@ -818,6 +824,10 @@ function save_lemniscate_results(hist_t, hist_poi, hist_ref, hist_error_xy, cfg)
     title(sprintf('Erro de rastreamento (RMS=%.3f m)', rms_xy));
     print(fig_err, err_png, '-dpng', '-r150');
 
+    if cfg.save_gif
+        save_lemniscate_gif(hist_t, hist_poi, hist_ref, hist_error_xy, hist_limo, cfg, gif_file);
+    end
+
     results.meta.timestamp = stamp;
     results.meta.mode = cfg.mode;
     results.meta.steering_mode = cfg.limo_steering_mode;
@@ -826,6 +836,7 @@ function save_lemniscate_results(hist_t, hist_poi, hist_ref, hist_error_xy, cfg)
     results.hist_poi = hist_poi;
     results.hist_ref = hist_ref;
     results.hist_error_xy = hist_error_xy;
+    results.hist_limo = hist_limo;
     results.cfg = cfg;
     save(mat_file, '-struct', 'results');
 
@@ -836,7 +847,93 @@ function save_lemniscate_results(hist_t, hist_poi, hist_ref, hist_error_xy, cfg)
     fprintf('Resultados salvos em %s:\n', out_dir);
     fprintf('  %s\n', traj_png);
     fprintf('  %s\n', err_png);
+    if cfg.save_gif
+        fprintf('  %s\n', gif_file);
+    end
     fprintf('  %s\n', mat_file);
+end
+
+function save_lemniscate_gif(hist_t, hist_poi, hist_ref, hist_error_xy, hist_limo, cfg, gif_file)
+    frame_step = max(1, round(cfg.gif_frame_step));
+    delay = 1.0 / max(1, cfg.gif_fps);
+    idx = 1:frame_step:numel(hist_t);
+    n_frames = numel(idx);
+
+    margin = 0.20;
+    all_x = [hist_ref(1, :), hist_poi(1, :), hist_limo(1, :)];
+    all_y = [hist_ref(2, :), hist_poi(2, :), hist_limo(2, :)];
+    x_lim = [min(all_x) - margin, max(all_x) + margin];
+    y_lim = [min(all_y) - margin, max(all_y) + margin];
+
+    fig = figure('Name', 'Lemniscate GIF', 'Visible', 'off', ...
+        'Position', [100, 100, 720, 640], 'Color', 'w');
+    ax = axes('Parent', fig);
+    hold(ax, 'on');
+    axis(ax, 'equal');
+    grid(ax, 'on');
+    xlabel(ax, 'X (m)');
+    ylabel(ax, 'Y (m)');
+    xlim(ax, x_lim);
+    ylim(ax, y_lim);
+
+    draw_obstacle_patches(ax, cfg);
+    plot(ax, hist_ref(1, :), hist_ref(2, :), 'Color', [1.0, 0.6, 0.6], ...
+        'LineStyle', '--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
+
+    h_trail_poi = plot(ax, nan, nan, 'b-', 'LineWidth', 1.5);
+    h_trail_limo = plot(ax, nan, nan, 'Color', [0.5, 0.5, 0.5], ...
+        'LineWidth', 1.0, 'HandleVisibility', 'off');
+    h_ref_now = plot(ax, nan, nan, 'r.', 'MarkerSize', 18);
+    h_poi_now = plot(ax, nan, nan, 'bo', 'MarkerFaceColor', 'b', 'MarkerSize', 8);
+    h_limo_body = plot(ax, nan, nan, 'ks', 'MarkerFaceColor', [0.15, 0.15, 0.15], 'MarkerSize', 7);
+    h_limo_heading = plot(ax, nan, nan, 'k-', 'LineWidth', 2.0, 'HandleVisibility', 'off');
+    h_poi_link = plot(ax, nan, nan, 'b-', 'LineWidth', 0.8, 'HandleVisibility', 'off');
+    h_title = title(ax, '', 'FontSize', 11);
+
+    legend(ax, [h_trail_poi, h_ref_now, h_poi_now, h_limo_body], ...
+        {'Trajetória PoI', 'Referência (t)', 'PoI (t)', 'Chassi LIMO (t)'}, ...
+        'Location', 'northeast');
+
+    fprintf('Gerando GIF (%d frames)... ', n_frames);
+
+    for fi = 1:n_frames
+        k = idx(fi);
+        t_now = hist_t(k);
+        x1 = hist_limo(1, k);
+        y1 = hist_limo(2, k);
+        psi1 = hist_limo(3, k);
+        poi = hist_poi(:, k);
+        ref = hist_ref(:, k);
+        err = norm(hist_error_xy(:, k));
+
+        set(h_trail_poi, 'XData', hist_poi(1, 1:k), 'YData', hist_poi(2, 1:k));
+        set(h_trail_limo, 'XData', hist_limo(1, 1:k), 'YData', hist_limo(2, 1:k));
+        set(h_ref_now, 'XData', ref(1), 'YData', ref(2));
+        set(h_poi_now, 'XData', poi(1), 'YData', poi(2));
+        set(h_limo_body, 'XData', x1, 'YData', y1);
+
+        head_len = 0.10;
+        set(h_limo_heading, 'XData', [x1, x1 + head_len * cos(psi1)], ...
+            'YData', [y1, y1 + head_len * sin(psi1)]);
+        set(h_poi_link, 'XData', [x1, poi(1)], 'YData', [y1, poi(2)]);
+
+        set(h_title, 'String', sprintf('t = %.1f s  |  erro PoI = %.3f m  |  frame %d/%d', ...
+            t_now, err, fi, n_frames));
+
+        drawnow limitrate;
+        frame = getframe(fig);
+        im = frame2im(frame);
+        [imind, cm] = rgb2ind(im, 256);
+
+        if fi == 1
+            imwrite(imind, cm, gif_file, 'gif', 'Loopcount', inf, 'DelayTime', delay);
+        else
+            imwrite(imind, cm, gif_file, 'gif', 'WriteMode', 'append', 'DelayTime', delay);
+        end
+    end
+
+    close(fig);
+    fprintf('OK\n');
 end
 
 function draw_obstacle_patches(ax, cfg)
