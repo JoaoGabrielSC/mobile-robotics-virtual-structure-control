@@ -47,7 +47,8 @@ cfg.drone_altitude = 1.5;      % altitude alvo (m)
 
 cfg.obstacle_center = [-0.20; 0.425];
 cfg.obstacle_radius = 0.15;
-cfg.obstacle_influence = 0.50;
+cfg.obstacle_influence_radius = 0.50;    % raio zona de influência (m)
+cfg.obstacle_influence = cfg.obstacle_influence_radius;  % alias legado
 
 cfg.v_max_limo = 2.0;
 cfg.v_max_drone_xy = 2.0;
@@ -333,8 +334,9 @@ end
 function q_r = apply_obstacle_null_space(q_r, poi_xy, cfg)
     offset = poi_xy - cfg.obstacle_center;
     distance = norm(offset);
+    influence_r = obstacle_influence_radius(cfg);
 
-    if distance >= cfg.obstacle_influence || distance <= 1e-6
+    if distance >= influence_r || distance <= 1e-6
         return;
     end
 
@@ -346,7 +348,7 @@ function q_r = apply_obstacle_null_space(q_r, poi_xy, cfg)
     if clearance <= 0.0
         obstacle_rate = 0.8;
     else
-        obstacle_rate = 0.4 * (1.0 / clearance - 1.0 / (cfg.obstacle_influence - cfg.obstacle_radius));
+        obstacle_rate = 0.4 * (1.0 / clearance - 1.0 / (influence_r - cfg.obstacle_radius));
     end
 
     primary_velocity = J_obs_pinv * obstacle_rate;
@@ -354,6 +356,16 @@ function q_r = apply_obstacle_null_space(q_r, poi_xy, cfg)
     secondary_velocity = null_projector * q_r(1:2);
 
     q_r(1:2) = primary_velocity + secondary_velocity;
+end
+
+function influence_r = obstacle_influence_radius(cfg)
+    if isfield(cfg, 'obstacle_influence_radius') && ~isempty(cfg.obstacle_influence_radius)
+        influence_r = cfg.obstacle_influence_radius;
+    elseif isfield(cfg, 'obstacle_influence') && ~isempty(cfg.obstacle_influence)
+        influence_r = cfg.obstacle_influence;
+    else
+        influence_r = 0.50;
+    end
 end
 
 function [position, yaw, ok] = read_optitrack_pose(pose_subscriber)

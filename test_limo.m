@@ -84,9 +84,16 @@ cfg.spin_turns = 1.0;            % voltas completas (360°); sinal = sentido
 
 % Obstáculo (modo lemniscate — mesmo do enunciado)
 cfg.obstacle_center = [-0.20; 0.425];
-cfg.obstacle_radius = 0.15;
-cfg.obstacle_influence = 0.50;
+cfg.obstacle_radius = 0.15;              % raio físico do obstáculo (m)
+cfg.obstacle_influence_radius = 0.50;    % raio da zona de influência (m); null-space se PoI estiver mais perto do centro
+cfg.obstacle_influence = cfg.obstacle_influence_radius;  % alias legado (main.m)
 cfg.use_obstacle_avoidance = true;
+
+% Cruzamento da lemniscata (centro da figura-8) — reduz oscilação no nó
+cfg.crossing_center = [0.0; 0.0];
+cfg.crossing_zone_radius = 0.28;         % raio (m) em que o feedback posicional é atenuado
+cfg.crossing_feedback_min = 0.20;        % fração mínima de kq/lq no centro (0 = só feedforward)
+cfg.crossing_cross_track_gain = 0.35;  % peso do erro perpendicular à tangente da referência
 cfg.pose_timeout = 30;           % segundos aguardando primeira pose
 
 % Salvamento automático de resultados (modo lemniscate)
@@ -529,14 +536,14 @@ function [ref_xy, ref_xy_dot] = lemniscata_reference(t)
 end
 
 function [v_d, ref_xy, err_xy] = lemniscate_outer_loop(t, poi, psi, cfg)
-    % Laço externo: controlador cinemático da formação (PoI do LIMO
-    % rastreando a lemniscata) + desvio de obstáculo em espaço nulo +
-    % inversão do jacobiano do ponto de interesse (A1). Retorna a
-    % velocidade de referência v_d=[v;w] já saturada nos limites físicos.
+    % Laço externo: feedforward ao longo da lemniscata + correção tanh,
+    % com atenuação no cruzamento e desvio de obstáculo em espaço nulo.
     [ref_xy, ref_xy_dot] = lemniscata_reference(t);
     err_xy = ref_xy - poi;
+    err_xy = attenuate_crossing_error(err_xy, ref_xy_dot, poi, cfg);
+    [kq_eff, lq_eff] = crossing_gain_scale(poi, cfg);
 
-    vel_poi = ref_xy_dot + cfg.lq * tanh((cfg.kq / cfg.lq) * err_xy);
+    vel_poi = ref_xy_dot + lq_eff * tanh((kq_eff / max(lq_eff, 1e-6)) * err_xy);
 
     if cfg.use_obstacle_avoidance
         vel_poi = apply_obstacle_null_space_xy(vel_poi, poi, cfg);
@@ -547,6 +554,55 @@ function [v_d, ref_xy, err_xy] = lemniscate_outer_loop(t, poi, psi, cfg)
     u = A1_inv * vel_poi;
 
     v_d = [clamp_scalar(u(1), cfg.v_max); clamp_scalar(u(2), cfg.w_max)];
+end
+
+function err_xy = attenuate_crossing_error(err_xy, ref_xy_dot, poi, cfg)
+    dist_cross = norm(poi - cfg.crossing_center);
+    if dist_cross >= cfg.crossing_zone_radius
+        return;
+    end
+
+    speed_ref = norm(ref_xy_dot);
+    if speed_ref < 1e-4
+        return;
+    end
+
+    tangent = ref_xy_dot / speed_ref;
+    err_along = dot(err_xy, tangent) * tangent;
+    err_cross = err_xy - err_along;
+    cross_gain = cfg.crossing_cross_track_gain;
+
+    zone = cfg.crossing_zone_radius;
+    blend = (zone - dist_cross) / zone;  % 0 na borda, 1 no centro
+    cross_gain = cross_gain + (1.0 - cross_gain) * (1.0 - blend);
+
+    err_xy = err_along + cross_gain * err_cross;
+end
+
+function [kq_eff, lq_eff] = crossing_gain_scale(poi, cfg)
+    dist_cross = norm(poi - cfg.crossing_center);
+    zone = cfg.crossing_zone_radius;
+
+    if dist_cross >= zone
+        kq_eff = cfg.kq;
+        lq_eff = cfg.lq;
+        return;
+    end
+
+    min_scale = cfg.crossing_feedback_min;
+    scale = min_scale + (1.0 - min_scale) * (dist_cross / zone)^2;
+    kq_eff = cfg.kq * scale;
+    lq_eff = cfg.lq * scale;
+end
+
+function influence_r = obstacle_influence_radius(cfg)
+    if isfield(cfg, 'obstacle_influence_radius') && ~isempty(cfg.obstacle_influence_radius)
+        influence_r = cfg.obstacle_influence_radius;
+    elseif isfield(cfg, 'obstacle_influence') && ~isempty(cfg.obstacle_influence)
+        influence_r = cfg.obstacle_influence;
+    else
+        influence_r = 0.50;
+    end
 end
 
 function v_state = limo_inner_loop(v_d, v_state, cfg)
@@ -577,8 +633,9 @@ end
 function vel_xy = apply_obstacle_null_space_xy(vel_xy, poi, cfg)
     offset = poi - cfg.obstacle_center;
     distance = norm(offset);
+    influence_r = obstacle_influence_radius(cfg);
 
-    if distance >= cfg.obstacle_influence || distance <= 1e-6
+    if distance >= influence_r || distance <= 1e-6
         return;
     end
 
@@ -589,7 +646,7 @@ function vel_xy = apply_obstacle_null_space_xy(vel_xy, poi, cfg)
     if clearance <= 0.0
         obstacle_rate = 0.8;
     else
-        obstacle_rate = 0.4 * (1.0 / clearance - 1.0 / (cfg.obstacle_influence - cfg.obstacle_radius));
+        obstacle_rate = 0.4 * (1.0 / clearance - 1.0 / (influence_r - cfg.obstacle_radius));
     end
 
     primary_velocity = J_obs_pinv * obstacle_rate;
@@ -671,11 +728,12 @@ function draw_obstacle_patches(ax, cfg)
     theta = linspace(0, 2 * pi, 100);
     cx = cfg.obstacle_center(1);
     cy = cfg.obstacle_center(2);
+    influence_r = obstacle_influence_radius(cfg);
 
-    patch(ax, cx + cfg.obstacle_influence * cos(theta), ...
-        cy + cfg.obstacle_influence * sin(theta), ...
+    patch(ax, cx + influence_r * cos(theta), ...
+        cy + influence_r * sin(theta), ...
         [0.47, 0.45, 0.42], 'FaceAlpha', 0.08, 'EdgeColor', [0.47, 0.45, 0.42], ...
-        'LineStyle', '--', 'DisplayName', 'Zona influência');
+        'LineStyle', '--', 'DisplayName', sprintf('Influência (R=%.2f m)', influence_r));
     patch(ax, cx + cfg.obstacle_radius * cos(theta), ...
         cy + cfg.obstacle_radius * sin(theta), ...
         [0.47, 0.45, 0.42], 'FaceAlpha', 0.45, 'EdgeColor', [0.35, 0.33, 0.30], ...
