@@ -43,7 +43,7 @@ close all;
 % 'pulse'      — sequência curta (frente → parar → girar)
 % 'spin'       — gira N voltas (4WD: no eixo; car-like: curva mínima)
 % 'lemniscate' — PoI segue a figura-8 do enunciado
-cfg.mode = 'monitor';
+cfg.mode = 'lemniscate';
 cfg.t_final = 80;                % duração do modo lemniscate (s); 80 = 2×40 s
 cfg.T = 1 / 30;                  % período de amostragem (30 Hz)
 cfg.pose_timeout = 30;           % timeout aguardando primeira pose (s)
@@ -64,7 +64,7 @@ cfg.v_max = 0.30;                        % limite |v| (m/s)
 cfg.w_max = 1.20;                        % limite |ω| (rad/s)
 
 % --- Controle: lemniscata (laço externo) -------------------------------
-cfg.kq = 1.2;                            % ganho proporcional
+cfg.kq = 0.8;                            % ganho proporcional
 cfg.lq = 0.30;                           % saturação tanh (m/s); menor que main.m (0.8)
                                          % pois 1/a1 amplifica a componente transversal
 
@@ -76,7 +76,7 @@ cfg.kd_limo = 4.0;
 % Geometria (enunciado): balde fixo no lab.
 cfg.obstacle_center = [-0.20; 0.425];     % centro [x; y] (m)
 cfg.obstacle_radius = 0.15;               % raio físico R_obs (m)
-cfg.obstacle_influence_radius = 0.50;     % raio da zona de influência R_inf (m)
+cfg.obstacle_influence_radius = 0.25;     % raio da zona de influência R_inf (m)
 cfg.obstacle_influence = cfg.obstacle_influence_radius;
 cfg.use_obstacle_avoidance = true;        % false = só tracking, sem evasão
 
@@ -85,7 +85,7 @@ cfg.use_obstacle_avoidance = true;        % false = só tracking, sem evasão
 % Modo 'classic':      lei legada ~ 1/clearance (compatível com main.m)
 cfg.obstacle_potential_mode = 'exponential';  % 'exponential' | 'classic'
 cfg.obstacle_potential_gain = 0.80;           % η — amplitude da repulsão
-cfg.obstacle_potential_exponent = 2;          % n — expoente da exponencial
+cfg.obstacle_potential_exponent = 4;          % n — expoente da exponencial
 cfg.obstacle_potential_shape_a = [];          % escala a (m); [] → R_inf - R_obs
 cfg.obstacle_potential_shape_b = [];          % escala b (m); [] → R_inf - R_obs
 cfg.obstacle_potential_vmax = 0.80;           % teto |∇U| (m/s)
@@ -93,7 +93,7 @@ cfg.obstacle_potential_vmax = 0.80;           % teto |∇U| (m/s)
 % --- Cruzamento da lemniscata (centro da figura-8) ----------------------
 % Reduz oscilação no nó onde os dois ramos se cruzam.
 cfg.crossing_center = [0.0; 0.0];
-cfg.crossing_zone_radius = 0.28;          % raio de atenuação (m)
+cfg.crossing_zone_radius = 0.01;          % raio de atenuação (m)
 cfg.crossing_feedback_min = 0.20;         % fração mínima de kq/lq no centro
 cfg.crossing_cross_track_gain = 0.35;     % peso do erro perpendicular à tangente
 
