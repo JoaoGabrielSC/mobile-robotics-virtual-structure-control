@@ -25,9 +25,6 @@
 %  '4wd'     — luzes amarelas; aceita v=0 + ω (giro no próprio eixo)
 %  'carlike' — luzes verdes; raio mínimo ~0.4 m (v acoplado a ω quando v≈0)
 %  'omni'    — LIMO 105 + use_mcnamu:=true; permite Linear.Y
-%  OBS.: o enunciado define o LIMO como "robô terrestre diferencial" —
-%  usar '4wd'. A lei de controle da lemniscata assume modelo uniciclo
-%  (v e w independentes), que só é válido em modo diferencial.
 
 clear;
 clc;
@@ -257,10 +254,7 @@ try
                     psi1, spin_yaw_prev, spin_angle_accum, running, cfg);
 
             case 'lemniscate'
-                [v_d, ref_xy, err_xy] = lemniscate_outer_loop(t, poi, psi1, cfg);
-                v_limo_state = limo_inner_loop(v_d, v_limo_state, cfg);
-                v_cmd = v_limo_state(1);
-                w_cmd = v_limo_state(2);
+                [v_cmd, w_cmd, ref_xy, err_xy] = lemniscate_control(t, poi, psi1, cfg);
                 hist_t(end + 1, 1) = t; %#ok<AGROW>
                 hist_poi(:, end + 1) = poi; %#ok<AGROW>
                 hist_ref(:, end + 1) = ref_xy; %#ok<AGROW>
