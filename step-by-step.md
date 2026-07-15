@@ -1,6 +1,6 @@
 # Step-by-step — Execução no LAB-AIR
 
-Guia prático baseado na sequência indicada em [`refence.m`](refence.m) (código validado em MATLAB 2021) e no [`main.m`](main.m) deste repositório.
+Guia prático baseado na sequência indicada em [`matlab/refence.m`](matlab/refence.m) (código validado em MATLAB 2021) e no [`matlab/main.m`](matlab/main.m) deste repositório.
 
 ---
 
@@ -27,7 +27,7 @@ flowchart TD
 
 ## Infraestrutura do lab (rede + comandos)
 
-Mapa dos equipamentos e de **onde** rodar cada comando (conforme [`refence.m`](refence.m)):
+Mapa dos equipamentos e de **onde** rodar cada comando (conforme [`matlab/refence.m`](matlab/refence.m)):
 
 ```mermaid
 flowchart LR
@@ -152,7 +152,7 @@ rostopic list | grep -E "natnet_ros|L1|cf"
 rostopic echo /natnet_ros/L1/pose
 ```
 
-**LIMO — luzes antes do launch** ([`refence.m`](refence.m)):
+**LIMO — luzes antes do launch** ([`matlab/refence.m`](matlab/refence.m)):
 
 ```mermaid
 flowchart LR
@@ -271,7 +271,7 @@ roslaunch limo_base limo_base.launch namespace:=L1 use_mcnamu:=true
 
 - As **duas** luzes frontais devem estar **verdes** antes do launch.
 - **Não gira no próprio eixo** (Ackermann; raio mínimo ~0,4 m). Comandos `v=0` + `ω≠0` são ignorados pelo hardware.
-- No MATLAB, use `cfg.limo_steering_mode = 'carlike'` em [`test_limo.m`](test_limo.m) e [`main.m`](main.m). O código acopla automaticamente `v = ω · R_min` quando `v≈0`.
+- No MATLAB, use `cfg.limo_steering_mode = 'carlike'` em [`matlab/test_limo.m`](matlab/test_limo.m) e [`matlab/main.m`](matlab/main.m). O código acopla automaticamente `v = ω · R_min` quando `v≈0`.
 
 **Modo 4WD (diferencial)**
 
@@ -297,8 +297,8 @@ Abra o MATLAB 2021 (ou compatível com ROS Toolbox) na máquina conectada à red
 
 ### Passo 5 — Preparar arquivos e configuração
 
-1. Coloque [`JoyControl.m`](refence.m) no path do MATLAB (fornecido pelo professor).
-2. Abra [`main.m`](main.m) e ajuste:
+1. Coloque `JoyControl.m` no path do MATLAB (fornecido pelo professor).
+2. Abra [`matlab/main.m`](matlab/main.m) e ajuste:
 
 ```matlab
 cfg.ros_master_host = '192.168.0.100';
@@ -524,14 +524,14 @@ rosshutdown;
 Com a infraestrutura ROS já rodando (passos 1–4):
 
 ```matlab
-main
+run('matlab/main.m')
 ```
 
 ---
 
 ## Teste inicial — só o LIMO
 
-Antes da formação completa, use [`test_limo.m`](test_limo.m) para validar OptiTrack + ROS + `cmd_vel` **sem o drone**.
+Antes da formação completa, use [`matlab/test_limo.m`](matlab/test_limo.m) para validar OptiTrack + ROS + `cmd_vel` **sem o drone**.
 
 **Pré-requisitos:** passos 1, 2 e 4 deste guia (Motive `L1`, `natnet_ros`, launch do LIMO). Não é necessário subir o Crazyflie.
 
@@ -551,7 +551,7 @@ cfg.ackermann_min_radius = 0.40;     % raio mínimo car-like (m)
 2. Execute:
 
 ```matlab
-test_limo
+run('matlab/test_limo.m')
 ```
 
 3. Confirme no Command Window:
@@ -562,7 +562,40 @@ test_limo
 
 ---
 
-## Referência rápida de tópicos
+## Teste inicial — só o drone
+
+Depois do `matlab/test_limo.m`, use [`matlab/drone_test.m`](matlab/drone_test.m) para validar Crazyflie + OptiTrack + takeoff/land **sem mover o LIMO**.
+
+**Pré-requisitos:** passos 1–3 (Motive `cfX`, `natnet_ros`, `crazyflie_server`). LIMO **não** precisa estar no ar; no modo `formation` basta `L1` visível (parado).
+
+1. Abra `drone_test.m` e escolha o modo:
+
+```matlab
+cfg.mode = 'monitor';       % 1º teste: só pose + cmd neutro
+cfg.do_takeoff = false;     % chão/mesa
+
+cfg.mode = 'hover';         % altitude 1,5 m
+cfg.do_takeoff = true;
+
+cfg.mode = 'teleop';        % joystick manual
+cfg.do_takeoff = true;
+
+cfg.mode = 'formation';     % estrutura virtual; só cmd drone
+cfg.do_takeoff = true;
+cfg.command_limo = false;   % manter false até main.m
+cfg.drone_namespace = 'cf7';
+```
+
+2. Execute:
+
+```matlab
+run('matlab/drone_test.m')
+```
+
+3. Ordem sugerida: `monitor` (chão) → `hover` → `formation` (LIMO parado no Motive).
+4. **Botão 1** → land | **Botão 2** → kill.
+
+---
 
 | Item | Valor |
 |------|-------|
@@ -594,6 +627,6 @@ test_limo
 
 ## Arquivos relacionados
 
-- [`refence.m`](refence.m) — snippets validados pelo professor
-- [`main.m`](main.m) — controlador completo de estrutura virtual
+- [`matlab/refence.m`](matlab/refence.m) — snippets validados pelo professor
+- [`matlab/main.m`](matlab/main.m) — controlador completo de estrutura virtual
 - [`README.md`](README.md) — especificação do trabalho e visão geral do projeto

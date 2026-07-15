@@ -1,0 +1,11 @@
+---
+description: Convenções de comentários e supressões para arquivos MATLAB
+globs: "**/*.m"
+alwaysApply: false
+---
+
+# Estilo MATLAB
+
+- Não adicione pragmas de supressão do analisador, como `%#ok<NASGU>`, `%#ok<AGROW>` ou similares.
+- Não use setas ASCII (`->`, `<->`, `=>`) em comentários. Escreva a relação por extenso.
+- Mantenha comentários curtos, em linguagem direta, e explique apenas decisões ou convenções importantes.

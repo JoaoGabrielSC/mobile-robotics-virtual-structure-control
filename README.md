@@ -4,6 +4,8 @@ Simulador de estrutura virtual para o robô terrestre **LIMO** e o quadrirrotor 
 
 Este repositório implementa em Python a arquitetura **Inner–Outer Loop** descrita no enunciado: controlador cinemático da formação (laço externo), compensadores dinâmicos dos dois robôs (laço interno), desvio de obstáculo em espaço nulo e integração numérica da planta.
 
+Base de conhecimento (slides + lab + código): [KNOWLEDGE.md](KNOWLEDGE.md).
+
 ---
 
 # Especificação do Trabalho – Robótica Móvel (2026/1)
@@ -318,10 +320,10 @@ O projeto deverá conter:
 
 ## Execução em hardware (MATLAB + ROS)
 
-O arquivo `main.m` implementa o mesmo controlador conectado aos robôs reais do LAB-AIR, seguindo `refence.m` (código validado pelo professor).
+O arquivo `matlab/main.m` implementa o mesmo controlador conectado aos robôs reais do LAB-AIR, seguindo `matlab/refence.m` (código validado pelo professor).
 
 ```matlab
-main
+run('matlab/main.m')
 ```
 
 ### Antes de rodar
@@ -340,7 +342,7 @@ main
    roslaunch limo_base limo_base.launch namespace:=L1
    ```
 
-4. **MATLAB:** `JoyControl.m` no path; ajuste em `main.m`:
+4. **MATLAB:** `JoyControl.m` no path; ajuste em `matlab/main.m`:
    - `cfg.ros_ip` — IP do servidor ROS (`192.168.0.100`)
    - `cfg.limo_namespace` — `L1`
    - `cfg.drone_namespace` — ex.: `cf7`

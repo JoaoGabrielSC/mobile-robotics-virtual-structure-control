@@ -1,0 +1,854 @@
+PGEE5558 Mobile Robotics — PPTX text extraction
+Source directory: /Users/user/ufes/Robotica/project
+Files: 8
+
+================================================================================
+FILE: Part 2-1 - Kinematic Models - Wheeled Mobile Robots.pptx
+================================================================================
+
+--- Slide 1 ---
+Kinematic Models
+Part 1: Wheeled Mobile Robots
+
+--- Slide 2 ---
+It is the simplest configuration and also the most used, given its simplicity. It consists of a chassis with two traction wheels attached to it, aligned along a virtual axle (virtual because the traction is independent on both wheels). Usually they have a third wheel, a castor, just for stabilization (this is the case with the Pioneer 3-DX, from Adept Mobile Robots, available in our lab). As such a wheel can rotate freely in any direction, and its contact area with the ground is minimal, it has practically no influence on the movement of the robot, and is disregarded in its modeling.
+Differential-Drive Wheeled Mobile Robots
+
+--- Slide 3 ---
+Another possible configuration is with four wheels, two at each side. However, the two wheels in the same side are either driven by a single motor or by two motors equally excited, so that both rotate at the same rate (rotations per minute). Therefore, in terms of movement, it works just like the first one. The advantage of using such a wheel configuration is the possibility of navigating on uneven terrains, since they can have more area of contact wheels-terrain.
+Differential-Drive Wheeled Mobile Robots
+
+--- Slide 4 ---
+By the right-hand rule, with the 𝑋-axis coinciding with the robot's direction of motion, 𝜔 is positive when the robot rotates to the left (counterclockwise).
+Without slipping, that is, with friction with the ground, the robot must rotate around a point that is on the virtual axle that joins its two traction wheels. This point is known as the instantaneous center of rotation (ICR), or also as the instantaneous center of curvature (ICC).
+Differential-Drive Wheeled Mobile Robots
+
+--- Slide 5 ---
+Varying the velocities of the two traction wheels the instantaneous center of rotation moves, making the robot to follow different routes.
+Differential-Drive Wheeled Mobile Robots
+
+--- Slide 6 ---
+This way we get the characterization of the differential-drive wheeled mobile shown below
+Differential-Drive Wheeled Mobile Robots
+
+--- Slide 7 ---
+Given its capability of turning around its own axis, the differential-drive wheeled mobile robots are also called unicycle robots, because of its similarity with the unicycles (“bicycles” of a single wheel).
+Differential-Drive Wheeled Mobile Robots
+
+--- Slide 8 ---
+The unicycle robot available at the PPGEE is the Pioneer 3-DX, from Accent Mobile Robotics, whose representative icon is shown below. An important detail is that such a vehicle does not have velocity in the direction of the virtual axle linking the two traction wheels, and because of this it is a nonholonomic vehicle.
+Differential-Drive Wheeled Mobile Robots
+
+--- Slide 9 ---
+Considering, now, that the point whose position should be controlled is the point h in the figure below, one has the so called nonholonomic platform with improved assessment, whose icon, still considering the Pioneer 3-DX is
+Differential-Drive Wheeled Mobile Robots
+
+--- Slide 10 ---
+Differential-Drive Wheeled Mobile Robots
+
+--- Slide 11 ---
+Car-Like (Automobile) Wheeled Mobile Robots
+
+--- Slide 12 ---
+Akerman model (automobile)
+Car-Like (Automobile) Wheeled Mobile Robots
+
+--- Slide 13 ---
+Ackerman model (automobile)
+Reduction to a bike model
+Car-Like (Automobile) Wheeled Mobile Robots
+
+--- Slide 14 ---
+Kinematic model
+f
+Point of interest
+for control
+Car-Like (Automobile) Wheeled Mobile Robots
+
+================================================================================
+FILE: Part 2-2 - Kinematic Models - Omnidirectional Wheeled Mobile Robots.pptx
+================================================================================
+
+--- Slide 1 ---
+Kinematic Models
+Part 2: Omnidirectional Wheeled Mobile Robots
+
+--- Slide 2 ---
+Omnidirectional Wheeled Mobile Robots
+Such robots can have linear velocity in virtually any direction. However, the mechanic and electronic designs of their wheels are quite different. One example is the so called Mecanun Wheel (or Swedish wheel), illustrated in the figures below. It generates forces at a direction of 45 degrees with respect to the wheel axis, thus generating the movements of the last figure (the blue arrows show the direction of rotation, the black ones are the forces and the red ones show the direction of movement of the vehicle).
+
+--- Slide 3 ---
+Omnidirectional Wheeled Mobile Robots
+The following video illustrates how the Mecanun Wheel is built, how it operates and the ways a vehicle with four of them can move.
+
+--- Slide 4 ---
+Other omnidirectional robots use three omni wheels, or even four of them.
+Omnidirectional Wheeled Mobile Robots
+
+--- Slide 5 ---
+Omnidirectional Wheeled Mobile Robots
+
+--- Slide 6 ---
+Omnidirectional Wheeled Mobile Robots
+
+================================================================================
+FILE: Part 2-3 - Kinematic Models - Quadrotors.pptx
+================================================================================
+
+--- Slide 1 ---
+Kinematic Models
+Part 3: Quadrotors
+
+--- Slide 2 ---
+In some applications, such as in aerial inspection tasks, either in plantation areas or disaster areas or areas of environmental monitoring, it can be much interesting to use an aerial robot, instead of a terrestrial one.
+
+A main reason is because with an aerial vehicle with an onboard camera, for instance, what is quite common, one can have a wider view of the area under inspection, what is not possible using just ground vehicles, even when using a group of them.
+
+There are also cases in which an aerial robot is used as part of a group involving one or more terrestrial robots, besides the aerial one, working cooperatively to accomplish a given task. This way one can get information from the wider view provided by the aerial robot and from the narrower view provided by the terrestrial robot (supposing that both carry cameras).
+
+Thus, the Unmanned Aerial Vehicles (UAVs, called VANTs - Veículos Aéreos Não Tripulados, in Portuguese), informally referred to as drones, appeared in the literature.
+Introduction to the Unmanned Aerial Vehicles (UAVs)
+Lighter than the air
+Havier than the air
+Non-motorized
+Motorized
+Motorized
+Non-motorized
+Balloons
+Airships
+Rotary wings
+(helicopters)
+Fixed wings
+(airplanes)
+Gliders
+UAV TYPES
+
+--- Slide 3 ---
+Source:
+Siyuan Chen, Debra F. Laefer, Eleni Mangina. State of Technology Review of Civilian UAVs. Recent Patents on Engineering, 10 (3): 160-174. 2016.
+Missions Accomplished by UAVs
+
+--- Slide 4 ---
+Drone Applications in USA
+
+--- Slide 5 ---
+Note: 3 is excellent and 1 is bad | Airplanes | Rotary wing vehicles | Airships
+Energy consumption | 2 | 1 | 3
+Maneuverability | 2 | 3 | 1
+Hovering capability | 1 | 3 | 3
+Low-speed flight capability | 1 | 3 | 3
+High-speed flight capability | 3 | 2 | 1
+Miniaturization | 2 | 3 | 1
+Vertical take-off | 1 | 3 | 3
+Indoor utilization | 1 | 3 | 2
+Total | 12 | 21 | 17
+UAVs x UAVs: Fixed Wings x Rotary Wings x Airships
+Source: I. Tjernber, J. Lindberg, K. Hansson. Cooperative Networked control of unmanned air vehicles. Technical Report, 2011.
+Considering the degrees of freedom of the drones, which we have already outlined, the conclusion is that the rotary wing vehicles are omnidirectional vehicles. They can move in any direction, besides being able of turning around their own Z axis.
+
+--- Slide 6 ---
+Due to the advantages outlined in the previous table, the rotary-wing aerial vehicles have received great attention from the scientific community and from the market, mainly when regarding civilian applications (military applications mostly use fixed-wing UAVs, mainly due to their capability to fly at high velocities and for their lower energy consumption). 
+The main advantages of the rotary-wing UAVs are their great flexibility to maneuver, their capability to hover, and the possibility of vertical take-off and landing, demanding small spaces to do that.
+However, they have a meaningful disadvantage, which is the high energy consumption. Effectively, their lift depends on keeping the engines on all the time. Therefore, even when hovering there is energy consumption.
+UAVs x UAVs: Rotary wings x Fixed wings
+
+--- Slide 7 ---
+The rotations of the four motors are individually controlled, and the combination of these four rotations, two by two, generates the maneuvers the quadrotor can perform.
+Principle of Operation of the Quadrotors
+
+--- Slide 8 ---
+Modeling of Quadrotor-type Vehicles
+
+--- Slide 9 ---
+Kinematic Model of Quadrotor-type Vehicles
+
+--- Slide 10 ---
+Characteristics of the Quadrotor Ar.Drone 2.0
+Specifically in the case of the AR.Drone 2.0, it is equipped with two electronic boards. One of them, called sensors board, contain a set of sensors (accelerometer, gyroscope, magnetometer, ultrasonic sensor and barometric sensor). The other one, called motherboard, is the central processing unit of the vehicle, based on an ARM Cortex-A8 processor, with clock of 1GHz, running an onboard version of the Linux operating system. It manages all the data coming from the sensors board, the video signals provided by two cameras onboard the vehicle, and a wireless communication link.
+The firmware installed on the motherboard is able to automatically accomplish the take-off, landing and flight stabilization tasks (the quadrotor takes-off and stays hovering), from when it accepts external commands of movement for the vehicle, sent through either a joystick or an algorithm running in a computer, through the wireless communication link.
+
+--- Slide 11 ---
+The AR.Drone 2.0 presents the following technical characteristics:
+Frontal camera: HD 720p, 30fps
+Wide-angle lens: 92° diagonal
+Video CODEC: H264
+Photo format: JPEG
+Connection: Wi-Fi
+Weight: 380 g, with the inner hull, and 420 g when equipped with the outer hull
+Processor: ARM Cortex A8 1 GHz 32-bit with DSP TMS320DMC64x 800 MHz for video processing
+Operating system: Linux 2.6.32
+RAM: 1 GB of DDR2 memory of 200 MHz
+USB: USB 2.0 of high velocity for extensions
+Wi-Fi b g n
+Gyroscope: 3 axes, precision of 2000°/second
+Accelerometer: 3 axes, precision of +/- 50 mg
+Magnetometer: 3 axes, precision of 6°
+Air pressure sensor: precision of +/- 10 Pa
+Ultrasonic sensor: to measure altitude
+Vertical camera: QVGA 60 FPS, to measure ground velocity
+Characteristics of the Quadrotor Ar.Drone 2.0
+
+--- Slide 12 ---
+As for the Bebop 2, it presents the following technical characteristics:
+Camera: 14 mega-pixels with fish eye lens
+Video: full HD 1080p in the three axes
+Stabilization: digital stabilization (proprietary system)
+Battery capacity: 25 minutes of flight (with battery of 2700 mAh)
+GPS: Yes
+Processor: Dual core with GPU quad-core
+Storage: flash system of 8 GB
+Wi-Fi 802.11a/b/g/n/ac
+Network: MIMO Dual band
+Wi-Fi Aerials: 2.4 and 5 GHz (dual dipole aerials), with output power up to 21 dBm
+Signal range: 300 m
+Maximum horizontal velocity: 16 m/s
+Maximum upward velocity: 6 m/s
+Video sensor: CMOS 14 Mpx
+Lens: fish eye lens Sunny 180°, with aperture of 1/2.3"
+Video stabilizer: digital system of 3 axes
+Video resolution: 1920 x 1080p (30 fps)
+Photo resolution: 4096 x 3072 pixels
+Video CODEC: H264
+Photo format: JPEG, RAW, DNG
+Internal memory: 8 GB Flash
+Characteristics of the Quadrotor Bebop 2
+
+--- Slide 13 ---
+Unlike the AR.Drone 2.0, which can be commanded directly via control signals sent via Wi-Fi, Bebop 2 operates through the ROS system (Robot Operating System), which runs on Linux. 
+However, like in the case of the AR.Drone 2.0, the firmware installed on the motherboard is capable of automatically performing takeoff, landing and flight stabilization (the vehicle takes off and stays hovering), besides accepting external motion commands for the vehicle, either via a joystick or a control algorithm running on a computer.
+Characteristics of the Quadrotor Bebop 2
+
+--- Slide 14 ---
+Characteristics of the Quadrotors AR.Drone 2.0 and Bebop 2
+
+--- Slide 15 ---
+Commanding the Quadrotors AR.Drone 2.0 and Bebop 2
+
+================================================================================
+FILE: Part 3 - Dynamic Models.pptx
+================================================================================
+
+--- Slide 1 ---
+Mobile Robotics
+Dynamic Models
+
+--- Slide 2 ---
+Introducing the Dynamic Model
+The basic assumption when dealing with the kinematic model of all the robots we have discussed in the previous chapter is that the robot immediately develops the commanded velocity. This means that the vehicle does not have mass/inertia, or it has the capability of infinite acceleration, both impossible. 
+
+In other words, it takes some time to the velocity developed by the vehicle to reach the commanded value, due to the mass/inertia and finite acceleration capability. The way the real velocity approaches the commanded one is dependent of the maximum available acceleration, what is associated to a dynamic behavior of the vehicle (dynamic because it involves acceleration, or force/torque).
+
+We can consider that a change in the commanded velocity is a velocity step applied to the robot, and we should consider its step response. In a certain way the dynamic model of the vehicle shows how this step response varies along time.
+
+As a consequence, right way after changing the commanded velocity there will be an error between the current velocity and the desired one, characterizing a velocity tracking error. 
+
+Therefore, it is quite important to model the dynamic behavior of the robot.
+
+--- Slide 3 ---
+To reduce such errors it is necessary to consider the dynamics of the robot, or its mass and inertia, and, thus, its finite linear and angular accelerations.
+Introducing the Dynamic Model
+
+--- Slide 4 ---
+Dynamic Model for Unicycle Robots
+Parameters and variables:
+
+--- Slide 5 ---
+References: 
+1) Celso de La Cruz and Ricardo Carelli (2008). Dynamic model based formation control and obstacle avoidance of multi-robot systems. Robotica, 26(3), 345-356. doi:10.1017/S0263574707004092
+2) Felipe Nascimento Martins, Mário Sarcinelli-Filho and Ricardo Carelli (2017). A Velocity-Based Dynamic Model and Its Properties for Differential Drive Mobile Robots. Journal of Intelligent & Robotic Systems, 85, 277–292. doi:10.1007/s10846-016-0381-9
+Dynamic Model for Unicycle Robots
+
+--- Slide 6 ---
+Model parameters:
+Dynamic Model for Unicycle Robots
+
+--- Slide 7 ---
+Rewriting the dynamic model and manipulating the terms one gets
+Dynamic Model for Unicycle Robots
+
+--- Slide 8 ---
+Properties
+Dynamic Model for Unicycle Robots
+
+--- Slide 9 ---
+Dynamic Model for Unicycle Robots
+
+--- Slide 10 ---
+Dynamic Model for Unicycle Robots
+
+--- Slide 11 ---
+Dynamic Model for Unicycle Robots
+
+--- Slide 12 ---
+Dynamic Model for Car-Like Robots
+
+--- Slide 13 ---
+Dynamic Model for Car-Like Robots
+
+--- Slide 14 ---
+Dynamic Model for Car-Like Robots
+
+--- Slide 15 ---
+Dynamic Model for Car-Like Robots
+
+--- Slide 16 ---
+Dynamic Model for Car-Like Robots
+
+--- Slide 17 ---
+Dynamic Model of Quadrotor-type Vehicles
+
+--- Slide 18 ---
+Dynamic Model of Quadrotor-type Vehicles
+
+--- Slide 19 ---
+Dynamic Model of Quadrotor-type Vehicles
+
+--- Slide 20 ---
+Dynamic Model of Quadrotor-type Vehicles
+
+--- Slide 21 ---
+Dynamic Model of Quadrotor-type Vehicles
+
+--- Slide 22 ---
+Dynamic Model of Quadrotor-type Vehicles
+
+--- Slide 23 ---
+Identifying the Model Parameters for the Ar.Drone 2.0 and Bebop 2
+Dynamic Model of Quadrotor-type Vehicles
+
+--- Slide 24 ---
+Modeling the Ar.Drone 2.0 and Bebop 2 Quadrotors
+
+--- Slide 25 ---
+Dynamic Model of Quadrotor-type Vehicles
+
+--- Slide 26 ---
+Dynamic Model of Quadrotor-type Vehicles
+
+--- Slide 27 ---
+Dynamic Model of Quadrotor-type Vehicles
+
+--- Slide 28 ---
+Dynamic Model for the Omnidirectional Robot
+
+--- Slide 29 ---
+Dynamic Model for the Omnidirectional Robot
+
+--- Slide 30 ---
+Performance evaluation
+Two situations were considered. First, we considered only the kinematic controller, and after we included the control based on the dynamic model identified, creating for that an inner control loop, having the commands generated by the kinematic controller as references (cascade or inner-outer loops control system). The tables below allow to compare the results, the first one considering the position errors and the second one considering the velocity errors.
+Dynamic Model for the Omnidirectional Robot
+
+--- Slide 31 ---
+Dynamic Model for the Omnidirectional Robot
+
+--- Slide 32 ---
+Dynamic Model for the Omnidirectional Robot
+
+================================================================================
+FILE: Part 4-1 - Motion Control.pptx
+================================================================================
+
+--- Slide 1 ---
+Mobile Robotics
+Motion Control
+
+--- Slide 2 ---
+Basic Control Objectives
+
+--- Slide 3 ---
+Posture control of a Mobile Robot
+Differential robot
+
+--- Slide 4 ---
+Differential robot
+Posture control of a Mobile Robot
+
+--- Slide 5 ---
+Omnidirectional robot
+Posture control of a Mobile Robot
+
+--- Slide 6 ---
+Quadrotor
+Posture control of a Mobile Robot
+
+--- Slide 7 ---
+Trajectory-tracking control of a Mobile Robot
+
+--- Slide 8 ---
+Quadrotor
+Trajectory-tracking control of a Mobile Robot
+
+--- Slide 9 ---
+Omnidirectional robot
+Trajectory-tracking control of a Mobile Robot
+
+--- Slide 10 ---
+Differential robot
+Trajectory-tracking control of a Mobile Robot
+
+--- Slide 11 ---
+Path-following control of a Mobile Robot
+
+--- Slide 12 ---
+Path-following control of a Mobile Robot
+
+--- Slide 13 ---
+Path-following control of a Mobile Robot
+Quadrotor
+
+--- Slide 14 ---
+Path-following control of a Mobile Robot
+Omnidirectional robot
+
+--- Slide 15 ---
+Path-following control of a Mobile Robot
+Differential robot
+
+--- Slide 16 ---
+Controller
+Plant
++
+-
+Feedback
+Real robot
+(experiment)
+Motion control of a Mobile Robot
+
+--- Slide 17 ---
+The control structure adopted is the so-called cascade controller or inner-outer loops controller. It is composed of two closed loops, with the output of the first loop (the outer one) being the reference for the second one (the inner loop). Observe that such a control structure can be designed for posture/position control, trajectory-tracking control and path-following control, as we will se ahead.
+Motion control of a Mobile Robot
+
+--- Slide 18 ---
+Motion control of a Mobile Robot
+The control signal generated by the kinematic controller could be directly sent to the robot, meaning that one could adopt just the outer loop, with implicit errors, of course
+
+--- Slide 19 ---
+Kinematic control – Inverse kinematics
+
+--- Slide 20 ---
+Kinematic control – Inverse kinematics
+
+--- Slide 21 ---
+Kinematic control – Inverse kinematics
+
+--- Slide 22 ---
+Kinematic control for Trajectory-Tracking
+When dealing with a trajectory-tracking task, the kinematic controller of the figure should guarantee that the velocity of the robot be high enough to reduce the error between the current robot position and the desired trajectory to zero, although the trajectory acts in the sense of increasing such an error.
+
+--- Slide 23 ---
+Kinematic control for Trajectory-Tracking
+
+--- Slide 24 ---
+Examples of Kinematic control for Trajectory-Tracking
+
+--- Slide 25 ---
+Examples of Kinematic control for Trajectory-Tracking
+
+--- Slide 26 ---
+Third example: unicycle robot (non-holonomic vehicle)
+Examples of Kinematic control for Trajectory-Tracking
+
+--- Slide 27 ---
+Examples of Kinematic control for Trajectory-Tracking
+
+--- Slide 28 ---
+Examples of Kinematic control for Trajectory-Tracking
+
+--- Slide 29 ---
+Kinematic control for Trajectory-Tracking with a Car-Like Robot
+
+--- Slide 30 ---
+Kinematic control for Trajectory-Tracking with a Car-Like Robot
+
+================================================================================
+FILE: Part 4-2 - Motion Control.pptx
+================================================================================
+
+--- Slide 1 ---
+Mobile Robotics
+Motion Control
+(Part 2)
+
+--- Slide 2 ---
+Position/Orientation Control
+
+--- Slide 3 ---
+Position/Orientation Control
+An important detail to be added to this case is that when considering the cases of the differential and  omnidirectional robots, as well as the quadrotor, they can rotate without changing their position. This way, one can control just the position of the vehicle, compensating for the desired orientation after the destination point is reached. Nonetheless, this can be done along navigation, if it is of interest for the application. In the case of the differential robot, however, the generalized kinematic model should be used.
+
+--- Slide 4 ---
+Position/Orientation Control
+
+--- Slide 5 ---
+Position/Orientation Control
+
+--- Slide 6 ---
+Path-Following Kinematic Control
+The problem of path-following control involves two objectives, namely to get the path to be followed, when th robot is out of it, and to ensure that the robot stays on the path, after reaching it. Therefore, a path-following controller should accomplish these two objectives. 
+The two figures below illustrate the two cases.
+
+--- Slide 7 ---
+Path-Following Kinematic Control
+
+--- Slide 8 ---
+Path-Following Kinematic Control
+
+--- Slide 9 ---
+Path-Following Kinematic Control
+
+--- Slide 10 ---
+Path-Following Kinematic Control
+The same reasoning is valid for the case of an omnidirectional robot, as illustrated below for the case of a quadrotor.
+
+--- Slide 11 ---
+Path-Following Kinematic Control
+% Caracterização do caminho
+%
+lim=input('Número de pontos do caminho ---> ‘); % lim = 500 pontos
+s=linspace(0,55,lim);
+xpc=8-5*cos(2*pi*s/60); ypc=5*sin(2*pi*s/60);
+dxpc=5*2*pi/60*sin(2*pi*s/60); dypc=5*2*pi/60*cos(2*pi*s/60);
+for kk=1:length(s) 
+psit(kk)=atan2(dypc(kk),dxpc(kk));
+end
+%
+%Cálculo do ponto c_n
+%
+[ntil,in]=min(sqrt((xpc-xc0).^2+(ypc-yc0).^2));
+xn=xpc(in); yn=ypc(in);psitn=psit(in);
+
+--- Slide 12 ---
+Path-Following Kinematic Control
+%Caracterização do caminho
+%
+lim=input('Número de pontos do caminho ---> ‘); %N=300
+s=linspace(0,80,lim);
+xpc=8-5*cos(2*pi*s/60); ypc=5*sin(2*pi*s/60); zpc=2*pi*s/60; psipc=0;
+dxpc=5*2*pi/60*sin(2*pi*s/60); dypc=5*2*pi/60*cos(2*pi*s/60); dzpc=2*pi/60; dpsipc=0;
+betat=atan(dypc./dxpc); vxy=sqrt(dxpc.^2+dypc.^2); tetat=atan(dzpc./vxy);
+for i=2:lim
+if((betat(i)-betat(i-1))>pi/2)
+betat(i:lim)=betat(i:lim)-pi;
+end; %if
+end; %for
+for i=2:lim
+if((tetat(i)-tetat(i-1))>pi/2)
+tetat(i:lim)=tetat(i:lim)-pi;
+end; %if
+end; %for
+
+--- Slide 13 ---
+As aforementioned, any rigid body with nonzero mass/inertia demands a delay in order to develop a commanded velocity. This means that just a finite acceleration is available, not an infinite one, which is implicit when dealing with just kinematic control.
+This means that there will be an error when tracking the commanded velocity, which results in a position error, when controlling the robot to track a given trajectory, for instance.
+The figures below illustrate this situation. They show the case of positioning a quadrotor in a desired point, firstly using just a kinematic controller, and secondly using an inner-outer loops controller, with a dynamic controller as the inner loop.
+Dynamic Control – Inverse Dynamics
+As a result the adoption of a dynamic compensator helps to reduce the position error.
+
+--- Slide 14 ---
+As a first step one can design a dynamic controller embedding the inner and the outer loops in a single controller, as we show in the sequel. Basically, what we intend to is to send Velocity commands are sent to the robot to make it to move accordingly, to reach desired positions in the world frame.
+Dynamic Control – Inverse Dynamics
+
+--- Slide 15 ---
+Dynamic Control – Inverse Dynamics
+
+--- Slide 16 ---
+Dynamic Control – Inverse Dynamics
+
+--- Slide 17 ---
+Feedback Linearization
+
+--- Slide 18 ---
+Feedback Linearization
+
+--- Slide 19 ---
+Dynamic Control – Inverse Dynamics
+
+--- Slide 20 ---
+Dynamic Control – Inverse Dynamics
+
+--- Slide 21 ---
+Cascade Dynamic Compensation
+
+--- Slide 22 ---
+The Dynamic Compensator
+Inner loop
+Robot
+Dynamic
+Compensator
+
+--- Slide 23 ---
+The Dynamic Compensator
+Inner loop
+Robot
+Dynamic
+Compensator
+
+--- Slide 24 ---
+The Dynamic Compensator
+
+--- Slide 25 ---
+The Dynamic Compensator
+
+--- Slide 26 ---
+Adaptive Dynamic Compensator
+
+--- Slide 27 ---
+Adaptive Dynamic Compensator
+
+--- Slide 28 ---
+Adaptive Dynamic Compensator
+
+--- Slide 29 ---
+Adaptive Dynamic Compensator
+
+--- Slide 30 ---
+Adaptive Dynamic Compensator
+Therefore, the adaptive inner loop control system is represented as shown in the figure below.
+
+--- Slide 31 ---
+Adaptive Dynamic Compensator
+
+--- Slide 32 ---
+Adaptive Dynamic Compensator
+
+--- Slide 33 ---
+Adaptive Dynamic Compensator
+
+--- Slide 34 ---
+Examples Using the Adaptive Dynamic Compensator
+
+--- Slide 35 ---
+Examples Using the Adaptive Dynamic Compensator
+
+================================================================================
+FILE: Part 5-1 - Control of Multi-robot Systems.pptx
+================================================================================
+
+--- Slide 1 ---
+PGEE5558 Mobile Robotics
+Control of Multi-robot Systems
+
+--- Slide 2 ---
+Control of Multi-robot Systems
+Controlling a multi-robot system, also known as a cluster or formation of mobile robots, involves coordinating a group of robots to collaborate on specific tasks. 
+This type of control is not merely about managing each robot independently but ensuring that each one acts to contribute to the overall task at hand. 
+Examples of such formations can be observed in various scenarios such as load transportation, inspecting disaster areas for survivors, surveillance of large areas, such as country borders, locating and disarming landmines, and even in competitive robot soccer matches.
+
+--- Slide 3 ---
+Control of Multi-robot Systems
+
+--- Slide 4 ---
+Several tasks accomplished by mobile robots are better accomplished by a group of robots working cooperatively than using a single robot. This is due, some times, to the own nature of the task to be accomplished, or even to the cost of accomplishing the task, when accomplished by a single robot.
+In the previous examples one can clearly see cases in which the task to be accomplished is better accomplished when a group of robots is adopted, instead of a single one. Let us see some cases:
+Case the bar were transported by a single drone such a robot would certainly be much greater, given the length of the piece, and it is much likely it would be more expensive than the two ones adopted.
+Regarding the example of inspection of rubble areas looking for survivors, using a group of robots the inspection task of a given area would be completed in much less time, thus increasing the probability of finding live victims.
+Control of Multi-robot Systems
+When it comes to locating and disarming mines, there is a significant risk of the inspection robot being destroyed by an explosion. Utilizing a fleet of less expensive robots, instead of relying on a single high-capacity unit, not only enables a broader coverage area in the same timeframe but also proves to be more economically beneficial. This approach minimizes the financial impact of losing a robot since it would not incur substantial costs or disrupt the ongoing task.
+Packages delivery requires a ground vehicle from which the delivery drone takes off to deliver a package and on which it lands after delivering the package.
+
+--- Slide 5 ---
+Meaningful remarks:
+1) Regarding a task of searching and deactivation of landmines, there is a great risk of loosing the inspecting robot, for the risk of an explosion. Therefore, using a group of cheaper robots instead of a single one of high inspection capability not only allows covering a greater area in the same timeframe, but also is economically more advantageous: loosing a robot would not represent great cost and would not halt the task.
+2) In the case of the search for survivors in rubble areas, by its turn, time is an important variable. The faster the search is executed, the greater the chance of finding survivors. Therefore, using more robots allows to accomplish the task with more efficiency.
+3) Eventually, it is possible to reduce cost, since a group of simpler robots can be cheaper than a single robot of more capacity, as it is the case in landmines detection.
+Control of Multi-robot Systems
+
+--- Slide 6 ---
+In the formation control there are two relevant aspects: 
+the motion control of each robot in the cluster, and 
+the coordination between their movements, to preserve the formation shape along navigation.
+Summarizing, the formation control is a coordinated control of the individual movement of each robot in the formation.
+Control of Multi-robot Systems
+
+--- Slide 7 ---
+Among the approaches for the coordinated control of mobile robots three distinct techniques are constantly referred to. They are the leader-follower, the virtual structure, and the behavior-based approaches.
+
+In the leader-follower approach a robot defined as the leader is responsible for guiding all the other robots compounding the formation, to take them to their desired positions and keep the shape of the formation along navigation. Normally, also, all the sensing responsibility and the generation of the control signals sent to each member of the formation is attributed to the leader. Therefore, in such an approach the leader is the most important agent, and its failure would compromise the task accomplishment, even halting the task.
+Control of Multi-robot Systems
+
+--- Slide 8 ---
+In the case of the virtual structure approach the main agent becomes the whole formation, with is dealt with as a single rigid body, virtual, with movement capability. The individual robots in the cluster move to establish or to keep a predefined geometric figure. In such a case the figure of the leader does not exist anymore, once the whole formation is considered as a single robot. In particular, the whole formation is considered as a single virtual robot, thus massless, and thus without any dynamic effect. Therefore, it is enough to design a kinematic controller for the virtual robot, to control the movement of the whole formation.
+By its turn, when adopting the behavior-based approach a set of behaviors is defined to each robot in the team, such as to search for a target point, to avoid obstacles and to establish the formation, for instance. The control signals sent to each robot can correspond either to a weighted average of each behavior, for instance, or it can exist an hierarchy among the behaviors, to be followed in the control.
+Control of Multi-robot Systems
+
+--- Slide 9 ---
+In terms of the implementation of the control system, it can be centralized or decentralized. 
+
+For the case of a centralized control structure, the element responsible for executing the control algorithm of the formation (it can be a robot of the formation or an external computer) is also responsible for gathering all the information related to the group, such as their relative (or absolute) positions, and for sending the respective control signals to establish/move the formation. 
+On the other hand, a decentralized control structure would not have such a centralizing unit. In such a way, each robot in the team has its own sensors, to inform its current position in the environment, the current state of the working environment and the current positions of the other members of the cluster, such that it works to assembly/move the formation.
+Control of Multi-robot Systems
+
+--- Slide 10 ---
+In both cases it is necessary a two-way communication channel
+between each robot and the centralizing unit, in the case of a centralized control structure, so that each robot inform its position to the centralizing unit and receive the control signals sent by it;
+between each robot and all the others, when a decentralized control structure is adopted, so that each robot can receive the information about the positions of all the members of the group  and inform its own position to all the partners.
+
+Notice that this (the communication network) can become a bottleneck when the formation involves several robots, mainly in the case of decentralized control.
+Control of Multi-robot Systems
+
+--- Slide 11 ---
+Control of Multi-robot Systems
+Our implementation: centralized control, using an external computer
+
+--- Slide 12 ---
+Control of Multi-robot Systems
+Our implementation: centralized control, using an external computer
+
+--- Slide 13 ---
+Leader-Follower Paradigm
+A leader-follower formation is configured as two robots, one of them, the follower, replicating the movement of the other, the leader.  Therefore, the leader in motion configures a trajectory the follower should track. 
+However, there is a certain offset between the position of the leader, the desired position for the follower, and the real position of the follower. 
+This way, two controllers should be designed: one for the leader robot and one for the follower robot. In some applications the leader can be guided by a human operator, like the delivery truck in a parcel delivery application, even remotely, but it could also be autonomously controlled. 
+An important aspect is that the leader robot can be accomplishing any task (positioning, path-following, trajectory-tracking), but the follower should be controlled to track the trajectory characterized by the leader in motion. 
+Notice that such a configuration is quite interesting when two robots should transport a bar shaped load, for the nature of the application itself. 
+However, a meaningful drawback associated to this multi-robot system is that the leader robot can not stop moving. Whenever it stops moving the follower also stops moving, since it replicates the movement of the leader. This way, if the leader undesirably stops working the entire formation will stop, halting the task.
+
+--- Slide 14 ---
+Leader-Follower Paradigm
+The following figures characterize a leader-follower formation, the first one considering two Pioneer 3-DX robots, and the second one considering two Bebop 2 quadrotors (homogeneous formations).
+This figure shows an example of a heterogeneous leader-follower formation, involving a Pioneer 3-DX wheeled robot and a Bebop 2 quadrotor. The formation is called heterogeneous because of the different kinematics of the two vehicles.
+
+--- Slide 15 ---
+Leader-Follower Paradigm
+
+--- Slide 16 ---
+Leader-Follower Paradigm
+
+--- Slide 17 ---
+Leader-Follower Paradigm
+First example:
+
+--- Slide 18 ---
+Leader-Follower Paradigm
+
+--- Slide 19 ---
+Leader-Follower Paradigm
+Second example:
+
+--- Slide 20 ---
+Leader-Follower Paradigm
+Third example: UGV-UAV formation mimicking a parcel delivery task indoors
+
+================================================================================
+FILE: Part 5-2 - Control of Multi-robot Systems.pptx
+================================================================================
+
+--- Slide 1 ---
+PGEE5558 Mobile Robotics
+Control of Multi-robot Systems
+(Part 2)
+
+--- Slide 2 ---
+Virtual Structure
+
+--- Slide 3 ---
+Virtual Structure
+
+--- Slide 4 ---
+Virtual Structure
+
+--- Slide 5 ---
+Virtual Structure
+
+--- Slide 6 ---
+Virtual Structure
+
+--- Slide 7 ---
+Virtual Structure
+
+--- Slide 8 ---
+Virtual Structure
+As one can observe Looking at the block diagram, two dynamic compensators are included in the robots space, which completes the inner-outer control loops corresponding to the whole controller, which are designed as discussed in Chapter 4.
+
+--- Slide 9 ---
+Virtual Structure
+As one can observe Looking at the block diagram, two dynamic compensators are included in the robots space, which completes the inner-outer control loops corresponding to the whole controller, which are designed as discussed in Chapter 4.
+As a first example, consider the case of a group of three differential robots. The virtual structure considered is the triangle having a robot in each vertex, as illustrated below.
+
+--- Slide 10 ---
+Virtual Structure
+
+--- Slide 11 ---
+Virtual Structure
+
+--- Slide 12 ---
+Virtual Structure
+fourth case: trajectory tracking by a Pioneer 3-DX and a Bebop 2 quadrotor
+
+--- Slide 13 ---
+Virtual Structure - Multiple Control Objectives
+When a given task is proposed, it is common that it can be split in some subtasks. For instance, when navigating a virtual structure at least two subtasks can be identified: to move the formation and to keep its shape/orientation. 
+The virtual paradigm so far discussed considers these two subtasks as a single task, not prioritizing any of the two subtasks. Other example is the case in which the virtual structure should avoid an obstacle. In such a case it is common that the obstacle avoidance subtask have highest priority, to prevent any accident.
+Therefore, it is sometimes necessary to split the task to be accomplished into some minor subtasks, whose accomplishment result in the accomplishment of the whole task, assigning different priorities to them. In this case, subtasks of lower priority will be executed if not conflicting with the subtasks of higher priority. This means that the task of moving a formation to follow a given path will be executed just in the absence of obstacles, supposing that there is a subtask of obstacle avoidance with higher priority.
+
+--- Slide 14 ---
+Virtual Structure - Multiple Control Objectives
+
+--- Slide 15 ---
+Virtual Structure - Multiple Control Objectives
+
+--- Slide 16 ---
+Virtual Structure - Multiple Control Objectives
+
+--- Slide 17 ---
+Virtual Structure - Multiple Control Objectives
+
+--- Slide 18 ---
+Virtual Structure - Multiple Control Objectives
+
+--- Slide 19 ---
+Virtual Structure - Multiple Control Objectives
+Giving the highest priority to keep the shape/orientation of the formation, the block diagram of the controller thus implemented is shown in the figure below.
+
+--- Slide 20 ---
+Virtual Structure - Multiple Control Objectives
+Results for Position priority
+
+--- Slide 21 ---
+Virtual Structure - Multiple Control Objectives
+Results for Shape/Orientation priority
+
+--- Slide 22 ---
+Virtual Structure - Multiple Control Objectives
+Other situation is when an obstacle appears in the route of the formation. Consider, for instance, that the formation illustrated in the figure below should move so that the point which characterizes the formation position (in yellow in the figure) faces an obstacle. In other words, the virtual robot characterizing the movement of the whole formation should deviate from such obstacle. In general, for safety reasons, the obstacle deviation is the subtask of highest priority. Therefore, three subtasks can be identified: to deviate from obstacles (both robots should have this capability), to move the formation and to keep the formation shape.
+
+--- Slide 23 ---
+Virtual Structure - Multiple Control Objectives
+
+--- Slide 24 ---
+Virtual Structure - Multiple Control Objectives
+
+--- Slide 25 ---
+Virtual Structure - Multiple Control Objectives
+Considering the three subtasks to move the formation, to avoid obstacles and to preserve the formation shape, two distinct situations can be observed, regarding the priorities assigned to the subtasks. They are what we call rigid formation and flexible formation. In the first case the formation shape is preserved when deviating from the obstacle, and in the second case the formation is deformed when avoiding an obstacle. 
+For the rigid formation, the sequence of priorities, from the highest to the lowest, are to preserve the formation shape, to avoid an obstacle and to move the formation.
+For the flexible formation, such a sequence is deviate from the obstacle, preserve the formation shape and move the formation.
+
+--- Slide 26 ---
+Virtual Structure - Multiple Control Objectives
+Considering the cluster composed of two wheeled omnidirectional robots, as shown in the figure below, lets analyze an example considering a positioning task being accomplished. The formation should behave as a rigid one.
+
+--- Slide 27 ---
+Virtual Structure - Multiple Control Objectives
+
+--- Slide 28 ---
+Virtual Structure - Multiple Control Objectives
+Still considering the cluster composed of two wheeled omnidirectional robots, as shown in the figure below, lets analyze once more an example considering a positioning task being accomplished. However, now the formation should behave as a flexible one.
+
+--- Slide 29 ---
+Virtual Structure - Multiple Control Objectives
+
+--- Slide 30 ---
+Virtual Structure - Multiple Control Objectives
+Still considering the cluster shown in the figure below, lets analyze an example considering the tracking of a circular trajectory. The first example considers a rigid formation.
+
+--- Slide 31 ---
+Virtual Structure - Multiple Control Objectives
+
+--- Slide 32 ---
+Virtual Structure - Multiple Control Objectives
+Still considering the cluster shown in the figure below, lets analyze once more an example considering the tracking of a circular trajectory. Now a flexible formation is considered.
+
+--- Slide 33 ---
+Virtual Structure - Multiple Control Objectives
