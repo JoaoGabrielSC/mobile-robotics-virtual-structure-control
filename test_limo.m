@@ -30,48 +30,95 @@ clear;
 clc;
 close all;
 
-%% Configuração — rede ROS
+%% ========================================================================
+%  CONFIGURAÇÃO — edite aqui antes de rodar
+%  ========================================================================
+
+% --- Modo de operação ---------------------------------------------------
+% 'monitor'    — só lê pose (primeiro teste; mais seguro)
+% 'teleop'     — joystick comanda v e ω
+% 'pulse'      — sequência curta (frente → parar → girar)
+% 'spin'       — gira N voltas (4WD: no eixo; car-like: curva mínima)
+% 'lemniscate' — PoI segue a figura-8 do enunciado
+cfg.mode = 'lemniscate';
+cfg.t_final = 80;                % duração do modo lemniscate (s); 80 = 2×40 s
+cfg.T = 1 / 30;                  % período de amostragem (30 Hz)
+cfg.pose_timeout = 30;           % timeout aguardando primeira pose (s)
+
+% --- Rede ROS -----------------------------------------------------------
 cfg.ros_master_host = '192.168.0.100';   % rosserver (roscore)
-cfg.ros_master_port = 11311;             % porta padrão do master
-cfg.limo_host = '192.168.0.104';         % onboard do LIMO (só SSH/launch; não usar no rosinit)
-cfg.limo_namespace = 'L1';       % ATENÇÃO: L + número 1, não I (i maiúsculo)
+cfg.ros_master_port = 11311;
+cfg.limo_host = '192.168.0.104';         % onboard LIMO (SSH/launch; não usar no rosinit)
+cfg.limo_namespace = 'L1';               % L + número 1, não I maiúsculo
 cfg.pose_topic_prefix = '/natnet_ros';
 
-cfg.T = 1 / 30;                  % 30 Hz
-cfg.mode = 'monitor';            % 'monitor' | 'teleop' | 'pulse' | 'spin' | 'lemniscate'
-cfg.t_final = 80;                % duração no modo lemniscate (s); 80 s = 2 períodos de 40 s
+% --- LIMO: cinemática e limites -----------------------------------------
+% steering: '4wd' (enunciado) | 'carlike' (Ackermann) | 'omni' (Mecanum)
+cfg.limo_steering_mode = '4wd';
+cfg.ackermann_min_radius = 0.40;         % m — só modo car-like (manual AgileX)
+cfg.a1 = 0.10;                           % offset PoI no eixo X do robô (m)
+cfg.v_max = 0.30;                        % limite |v| (m/s)
+cfg.w_max = 1.20;                        % limite |ω| (rad/s)
 
-cfg.a1 = 0.10;                   % PoI do LIMO (m)
-cfg.kq = 1.2;                    % ganho proporcional (modo lemniscate)
-cfg.lq = 0.8;                    % saturação tanh (modo lemniscate)
+% --- Controle: lemniscata (laço externo) -------------------------------
+cfg.kq = 0.8;                            % ganho proporcional
+cfg.lq = 0.30;                           % saturação tanh (m/s); menor que main.m (0.8)
+                                         % pois 1/a1 amplifica a componente transversal
 
-% Limites conservadores para teste no lab
-cfg.v_max = 0.30;                % m/s
-cfg.w_max = 0.50;                % rad/s
-cfg.limo_steering_mode = 'carlike';  % '4wd' | 'carlike' | 'omni'
-cfg.ackermann_min_radius = 0.40;     % m (manual AgileX; modo car-like)
+% --- Controle: laço interno LIMO ----------------------------------------
+cfg.theta_limo = [0.1521; 0.0953; 0.0031; 0.9840; -0.0451; 1.6422];
+cfg.kd_limo = 4.0;
 
-% Joystick (JoyControl) — ajuste os índices se necessário
-cfg.joystick_axis_linear = 2;    % eixo analógico -> velocidade linear
-cfg.joystick_axis_angular = 3;   % eixo analógico -> velocidade angular
+% --- Obstáculo e campo potencial (modo lemniscate) ----------------------
+% Geometria (enunciado): balde fixo no lab.
+cfg.obstacle_center = [-0.20; 0.425];     % centro [x; y] (m)
+cfg.obstacle_radius = 0.15;               % raio físico R_obs (m)
+cfg.obstacle_influence_radius = 0.25;     % raio da zona de influência R_inf (m)
+cfg.obstacle_influence = cfg.obstacle_influence_radius;
+cfg.use_obstacle_avoidance = true;        % false = só tracking, sem evasão
+
+% Campo potencial repulsivo em null-space (prioridade: obstáculo > tracking)
+% Modo 'exponential': U = η·exp(-((dx/a)^n + (dy/b)^n)), vel = -∇U
+% Modo 'classic':      lei legada ~ 1/clearance (compatível com main.m)
+cfg.obstacle_potential_mode = 'exponential';  % 'exponential' | 'classic'
+cfg.obstacle_potential_gain = 0.80;           % η — amplitude da repulsão
+cfg.obstacle_potential_exponent = 4;          % n — expoente da exponencial
+cfg.obstacle_potential_shape_a = [];          % escala a (m); [] → R_inf - R_obs
+cfg.obstacle_potential_shape_b = [];          % escala b (m); [] → R_inf - R_obs
+cfg.obstacle_potential_vmax = 0.80;           % teto |∇U| (m/s)
+
+% --- Cruzamento da lemniscata (centro da figura-8) ----------------------
+% Reduz oscilação no nó onde os dois ramos se cruzam.
+cfg.crossing_center = [0.0; 0.0];
+cfg.crossing_zone_radius = 0.01;          % raio de atenuação (m)
+cfg.crossing_feedback_min = 0.20;         % fração mínima de kq/lq no centro
+cfg.crossing_cross_track_gain = 0.35;     % peso do erro perpendicular à tangente
+
+% --- Joystick (JoyControl) ----------------------------------------------
+cfg.joystick_axis_linear = 2;
+cfg.joystick_axis_angular = 3;
 cfg.joystick_deadzone = 0.15;
-cfg.joystick_stop_button = 1;    % botão digital -> parar e sair
+cfg.joystick_stop_button = 1;             % botão → parar e encerrar
 
-% Sequência automática (modo 'pulse')
-cfg.pulse_linear_speed = 0.15;   % m/s
-cfg.pulse_angular_speed = 0.25;  % rad/s
-cfg.pulse_duration = 2.0;        % s por etapa
+% --- Modo 'pulse' (sequência automática) --------------------------------
+cfg.pulse_linear_speed = 0.15;            % m/s
+cfg.pulse_angular_speed = 0.25;           % rad/s
+cfg.pulse_duration = 2.0;                 % s por etapa
 
-% Rotação no próprio eixo (modo 'spin')
-cfg.spin_angular_speed = 0.25;   % rad/s (+ anti-horário, − horário)
-cfg.spin_turns = 1.0;            % voltas completas (360°); sinal = sentido
+% --- Modo 'spin' (rotação) ----------------------------------------------
+cfg.spin_angular_speed = 0.25;            % rad/s (+ anti-horário)
+cfg.spin_turns = 1.0;                     % voltas completas (sinal = sentido)
 
-% Obstáculo (modo lemniscate — mesmo do enunciado)
-cfg.obstacle_center = [-0.20; 0.425];
-cfg.obstacle_radius = 0.15;
-cfg.obstacle_influence = 0.50;
-cfg.use_obstacle_avoidance = true;
-cfg.pose_timeout = 30;           % segundos aguardando primeira pose
+% --- Resultados (modo lemniscate) ---------------------------------------
+cfg.save_results = true;
+cfg.results_dir = fullfile('results', 'test_limo');
+cfg.save_gif = true;                      % animação GIF da trajetória
+cfg.gif_fps = 10;                         % taxa de reprodução do GIF (frames/s)
+cfg.gif_frame_step = 3;                   % usa 1 a cada N amostras (30 Hz → step 3 ≈ 10 Hz)
+
+%% ========================================================================
+%  Fim da configuração — não é necessário editar abaixo desta linha
+%  ========================================================================
 
 fprintf('=== Teste LIMO | modo: %s | steering: %s ===\n', ...
     cfg.mode, cfg.limo_steering_mode);
@@ -156,6 +203,8 @@ hist_t = [];
 hist_poi = [];
 hist_ref = [];
 hist_error_xy = [];
+hist_limo = [];                  % [x; y; psi] do chassi (OptiTrack)
+v_limo_state = [0.0; 0.0];       % estado interno do compensador dinâmico [v; w]
 
 try
     while running
@@ -210,6 +259,7 @@ try
                 hist_poi(:, end + 1) = poi; %#ok<AGROW>
                 hist_ref(:, end + 1) = ref_xy; %#ok<AGROW>
                 hist_error_xy(:, end + 1) = err_xy; %#ok<AGROW>
+                hist_limo(:, end + 1) = [x1; y1; psi1]; %#ok<AGROW>
                 if t >= cfg.t_final
                     fprintf('Tempo final (%.0f s) atingido.\n', cfg.t_final);
                     running = false;
@@ -250,31 +300,7 @@ pause(0.5);
 rosshutdown;
 
 if strcmp(cfg.mode, 'lemniscate') && ~isempty(hist_t)
-    figure('Name', 'Teste lemniscate - LIMO');
-    plot(hist_ref(1, :), hist_ref(2, :), 'r--', 'LineWidth', 1.5, 'DisplayName', 'Referência');
-    hold on;
-    plot(hist_poi(1, :), hist_poi(2, :), 'b-', 'LineWidth', 1.2, 'DisplayName', 'PoI LIMO');
-    plot(hist_poi(1, 1), hist_poi(2, 1), 'go', 'MarkerSize', 8, 'DisplayName', 'Início');
-    plot(hist_poi(1, end), hist_poi(2, end), 'ks', 'MarkerSize', 8, 'DisplayName', 'Fim');
-    axis equal;
-    grid on;
-    xlabel('X (m)');
-    ylabel('Y (m)');
-    title('Lemniscata de Bernoulli — PoI do LIMO');
-    legend('Location', 'best');
-
-    figure('Name', 'Erro XY - lemniscate');
-    plot(hist_t, hist_error_xy(1, :), 'r', 'DisplayName', 'Erro X');
-    hold on;
-    plot(hist_t, hist_error_xy(2, :), 'g', 'DisplayName', 'Erro Y');
-    grid on;
-    xlabel('Tempo (s)');
-    ylabel('Erro (m)');
-    legend('Location', 'best');
-    title('Erro de rastreamento da figura-8');
-
-    rms_xy = sqrt(mean(sum(hist_error_xy.^2, 1)));
-    fprintf('Erro RMS de posição (PoI): %.3f m\n', rms_xy);
+    save_lemniscate_results(hist_t, hist_poi, hist_ref, hist_error_xy, hist_limo, cfg);
 end
 
 fprintf('Teste LIMO finalizado.\n');
@@ -528,11 +554,15 @@ function [ref_xy, ref_xy_dot] = lemniscata_reference(t)
                   0.75 * (4.0 * pi / 40.0) * cos(phase_y)];
 end
 
-function [v_cmd, w_cmd, ref_xy, err_xy] = lemniscate_control(t, poi, psi, cfg)
+function [v_d, ref_xy, err_xy] = lemniscate_outer_loop(t, poi, psi, cfg)
+    % Laço externo: feedforward ao longo da lemniscata + correção tanh,
+    % com atenuação no cruzamento e desvio de obstáculo em espaço nulo.
     [ref_xy, ref_xy_dot] = lemniscata_reference(t);
     err_xy = ref_xy - poi;
+    err_xy = attenuate_crossing_error(err_xy, ref_xy_dot, poi, cfg);
+    [kq_eff, lq_eff] = crossing_gain_scale(poi, cfg);
 
-    vel_poi = ref_xy_dot + cfg.lq * tanh((cfg.kq / cfg.lq) * err_xy);
+    vel_poi = ref_xy_dot + lq_eff * tanh((kq_eff / max(lq_eff, 1e-6)) * err_xy);
 
     if cfg.use_obstacle_avoidance
         vel_poi = apply_obstacle_null_space_xy(vel_poi, poi, cfg);
@@ -542,33 +572,376 @@ function [v_cmd, w_cmd, ref_xy, err_xy] = lemniscate_control(t, poi, psi, cfg)
               -sin(psi) / cfg.a1, cos(psi) / cfg.a1];
     u = A1_inv * vel_poi;
 
-    v_cmd = clamp_scalar(u(1), cfg.v_max);
-    w_cmd = clamp_scalar(u(2), cfg.w_max);
+    v_d = [clamp_scalar(u(1), cfg.v_max); clamp_scalar(u(2), cfg.w_max)];
 end
 
-function vel_xy = apply_obstacle_null_space_xy(vel_xy, poi, cfg)
-    offset = poi - cfg.obstacle_center;
-    distance = norm(offset);
-
-    if distance >= cfg.obstacle_influence || distance <= 1e-6
+function err_xy = attenuate_crossing_error(err_xy, ref_xy_dot, poi, cfg)
+    dist_cross = norm(poi - cfg.crossing_center);
+    if dist_cross >= cfg.crossing_zone_radius
         return;
     end
 
-    direction = offset / distance;
-    J_obs_pinv = direction;
-
-    clearance = distance - cfg.obstacle_radius;
-    if clearance <= 0.0
-        obstacle_rate = 0.8;
-    else
-        obstacle_rate = 0.4 * (1.0 / clearance - 1.0 / (cfg.obstacle_influence - cfg.obstacle_radius));
+    speed_ref = norm(ref_xy_dot);
+    if speed_ref < 1e-4
+        return;
     end
 
-    primary_velocity = J_obs_pinv * obstacle_rate;
-    null_projector = eye(2) - J_obs_pinv * direction.';
+    tangent = ref_xy_dot / speed_ref;
+    err_along = dot(err_xy, tangent) * tangent;
+    err_cross = err_xy - err_along;
+    cross_gain = cfg.crossing_cross_track_gain;
+
+    zone = cfg.crossing_zone_radius;
+    blend = (zone - dist_cross) / zone;  % 0 na borda, 1 no centro
+    cross_gain = cross_gain + (1.0 - cross_gain) * (1.0 - blend);
+
+    err_xy = err_along + cross_gain * err_cross;
+end
+
+function [kq_eff, lq_eff] = crossing_gain_scale(poi, cfg)
+    dist_cross = norm(poi - cfg.crossing_center);
+    zone = cfg.crossing_zone_radius;
+
+    if dist_cross >= zone
+        kq_eff = cfg.kq;
+        lq_eff = cfg.lq;
+        return;
+    end
+
+    min_scale = cfg.crossing_feedback_min;
+    scale = min_scale + (1.0 - min_scale) * (dist_cross / zone)^2;
+    kq_eff = cfg.kq * scale;
+    lq_eff = cfg.lq * scale;
+end
+
+function vel_xy = apply_obstacle_null_space_xy(vel_xy, poi, cfg)
+    % Null-space: campo potencial repulsivo (prioridade) + tracking (secundário).
+    offset = poi - cfg.obstacle_center;
+    distance = norm(offset);
+    influence_r = obstacle_influence_radius(cfg);
+
+    if distance >= influence_r || distance <= 1e-6
+        return;
+    end
+
+    grad = obstacle_repulsive_gradient(offset, cfg);
+    grad_mag = norm(grad);
+    if grad_mag <= 1e-9
+        return;
+    end
+
+    task_dir = grad / grad_mag;
+    J_obs_pinv = task_dir;
+    primary_velocity = grad;
+    null_projector = eye(2) - J_obs_pinv * task_dir.';
     vel_xy = primary_velocity + null_projector * vel_xy;
+end
+
+function grad = obstacle_repulsive_gradient(offset, cfg)
+    % Gradiente repulsivo -∇U (afasta do centro do obstáculo).
+    % Modos: 'exponential' (default) | 'classic' (1/clearance legado)
+    distance = norm(offset);
+    if distance <= 1e-9
+        grad = [0.0; 0.0];
+        return;
+    end
+
+    influence_r = obstacle_influence_radius(cfg);
+    direction = offset / distance;
+    clearance = distance - cfg.obstacle_radius;
+    gain = obstacle_potential_gain(cfg);
+    vmax = obstacle_potential_vmax(cfg);
+
+    if clearance <= 0.0
+        grad = direction * vmax;
+        return;
+    end
+
+    if strcmp(obstacle_potential_mode(cfg), 'classic')
+        d_max = influence_r - cfg.obstacle_radius;
+        grad = direction * gain * (1.0 / clearance - 1.0 / d_max);
+    else
+        dx = offset(1);
+        dy = offset(2);
+        a = obstacle_potential_shape_a(cfg, influence_r);
+        b = obstacle_potential_shape_b(cfg, influence_r);
+        n = obstacle_potential_exponent(cfg);
+
+        u = (dx / a)^n + (dy / b)^n;
+        exp_term = exp(-u);
+        scale = gain * exp_term * n;
+
+        if n == 2
+            grad = [scale * dx / (a^2); scale * dy / (b^2)];
+        else
+            grad = [scale * sign(dx) * abs(dx)^(n - 1) / (a^n); ...
+                    scale * sign(dy) * abs(dy)^(n - 1) / (b^n)];
+        end
+    end
+
+    grad_mag = norm(grad);
+    if grad_mag > vmax
+        grad = grad * (vmax / grad_mag);
+    end
+end
+
+function influence_r = obstacle_influence_radius(cfg)
+    if isfield(cfg, 'obstacle_influence_radius') && ~isempty(cfg.obstacle_influence_radius)
+        influence_r = cfg.obstacle_influence_radius;
+    elseif isfield(cfg, 'obstacle_influence') && ~isempty(cfg.obstacle_influence)
+        influence_r = cfg.obstacle_influence;
+    else
+        influence_r = 0.50;
+    end
+end
+
+function mode = obstacle_potential_mode(cfg)
+    if isfield(cfg, 'obstacle_potential_mode') && ~isempty(cfg.obstacle_potential_mode)
+        mode = lower(cfg.obstacle_potential_mode);
+    else
+        mode = 'exponential';
+    end
+end
+
+function gain = obstacle_potential_gain(cfg)
+    if isfield(cfg, 'obstacle_potential_gain') && ~isempty(cfg.obstacle_potential_gain)
+        gain = cfg.obstacle_potential_gain;
+    else
+        gain = 0.80;
+    end
+end
+
+function n = obstacle_potential_exponent(cfg)
+    if isfield(cfg, 'obstacle_potential_exponent') && ~isempty(cfg.obstacle_potential_exponent)
+        n = cfg.obstacle_potential_exponent;
+    else
+        n = 2;
+    end
+end
+
+function a = obstacle_potential_shape_a(cfg, influence_r)
+    if isfield(cfg, 'obstacle_potential_shape_a') && ~isempty(cfg.obstacle_potential_shape_a)
+        a = cfg.obstacle_potential_shape_a;
+    else
+        a = influence_r - cfg.obstacle_radius;
+    end
+end
+
+function b = obstacle_potential_shape_b(cfg, influence_r)
+    if isfield(cfg, 'obstacle_potential_shape_b') && ~isempty(cfg.obstacle_potential_shape_b)
+        b = cfg.obstacle_potential_shape_b;
+    else
+        b = influence_r - cfg.obstacle_radius;
+    end
+end
+
+function vmax = obstacle_potential_vmax(cfg)
+    if isfield(cfg, 'obstacle_potential_vmax') && ~isempty(cfg.obstacle_potential_vmax)
+        vmax = cfg.obstacle_potential_vmax;
+    else
+        vmax = 0.80;
+    end
+end
+
+function v_state = limo_inner_loop(v_d, v_state, cfg)
+    % Laço interno: compensador dinâmico do LIMO (regressão linear nos
+    % parâmetros theta_limo do enunciado), integrado a T=1/30 s. v_state
+    % é o estado interno [v; w] usado como referência de velocidade
+    % suavizada, coerente com a dinâmica real do robô, enviada ao cmd_vel.
+    u_real = v_state(1);
+    w_real = v_state(2);
+
+    Y1 = [u_real, 0.0, w_real^2, 0.0, 0.0, 0.0; ...
+          0.0, w_real, 0.0, u_real, u_real * w_real, w_real];
+
+    KD = diag([cfg.kd_limo, cfg.kd_limo]);
+    u_control = Y1 * cfg.theta_limo + KD * (v_d - v_state);
+
+    M1 = [cfg.theta_limo(1), 0.0; 0.0, cfg.theta_limo(2)];
+    C1 = [cfg.theta_limo(4) * u_real, cfg.theta_limo(3) * w_real; ...
+          cfg.theta_limo(5) * u_real + cfg.theta_limo(6) * w_real, 0.0];
+
+    v_dot = M1 \ (u_control - C1 * v_state);
+    v_state = v_state + cfg.T * v_dot;
+
+    v_state(1) = clamp_scalar(v_state(1), cfg.v_max);
+    v_state(2) = clamp_scalar(v_state(2), cfg.w_max);
 end
 
 function y = clamp_scalar(x, limit)
     y = min(max(x, -limit), limit);
+end
+
+function save_lemniscate_results(hist_t, hist_poi, hist_ref, hist_error_xy, hist_limo, cfg)
+    if ~cfg.save_results
+        return;
+    end
+
+    stamp = datestr(now, 'yyyymmdd_HHMMSS');
+    out_dir = cfg.results_dir;
+    if ~exist(out_dir, 'dir')
+        mkdir(out_dir);
+    end
+
+    prefix = sprintf('lemniscate_%s_%s', cfg.mode, stamp);
+    traj_png = fullfile(out_dir, [prefix, '_traj.png']);
+    err_png = fullfile(out_dir, [prefix, '_error.png']);
+    gif_file = fullfile(out_dir, [prefix, '_anim.gif']);
+    mat_file = fullfile(out_dir, [prefix, '.mat']);
+
+    rms_xy = sqrt(mean(sum(hist_error_xy.^2, 1)));
+
+    fig_traj = figure('Name', 'Teste lemniscate - LIMO', 'Visible', 'off');
+    draw_obstacle_patches(gca, cfg);
+    hold on;
+    plot(hist_ref(1, :), hist_ref(2, :), 'r--', 'LineWidth', 1.5, 'DisplayName', 'Referência');
+    plot(hist_poi(1, :), hist_poi(2, :), 'b-', 'LineWidth', 1.2, 'DisplayName', 'PoI LIMO');
+    plot(hist_poi(1, 1), hist_poi(2, 1), 'go', 'MarkerSize', 8, 'DisplayName', 'Início');
+    plot(hist_poi(1, end), hist_poi(2, end), 'ks', 'MarkerSize', 8, 'DisplayName', 'Fim');
+    axis equal;
+    grid on;
+    xlabel('X (m)');
+    ylabel('Y (m)');
+    title(sprintf('Lemniscata — PoI LIMO (%s)', stamp));
+    legend('Location', 'best');
+    print(fig_traj, traj_png, '-dpng', '-r150');
+
+    fig_err = figure('Name', 'Erro XY - lemniscate', 'Visible', 'off');
+    plot(hist_t, hist_error_xy(1, :), 'r', 'DisplayName', 'Erro X');
+    hold on;
+    plot(hist_t, hist_error_xy(2, :), 'g', 'DisplayName', 'Erro Y');
+    plot(hist_t, vecnorm(hist_error_xy, 2, 1), 'k-', 'LineWidth', 1.2, 'DisplayName', '||erro||');
+    grid on;
+    xlabel('Tempo (s)');
+    ylabel('Erro (m)');
+    legend('Location', 'best');
+    title(sprintf('Erro de rastreamento (RMS=%.3f m)', rms_xy));
+    print(fig_err, err_png, '-dpng', '-r150');
+
+    if cfg.save_gif
+        save_lemniscate_gif(hist_t, hist_poi, hist_ref, hist_error_xy, hist_limo, cfg, gif_file);
+    end
+
+    results.meta.timestamp = stamp;
+    results.meta.mode = cfg.mode;
+    results.meta.steering_mode = cfg.limo_steering_mode;
+    results.meta.rms_xy = rms_xy;
+    results.hist_t = hist_t;
+    results.hist_poi = hist_poi;
+    results.hist_ref = hist_ref;
+    results.hist_error_xy = hist_error_xy;
+    results.hist_limo = hist_limo;
+    results.cfg = cfg;
+    save(mat_file, '-struct', 'results');
+
+    close(fig_traj);
+    close(fig_err);
+
+    fprintf('Erro RMS de posição (PoI): %.3f m\n', rms_xy);
+    fprintf('Resultados salvos em %s:\n', out_dir);
+    fprintf('  %s\n', traj_png);
+    fprintf('  %s\n', err_png);
+    if cfg.save_gif
+        fprintf('  %s\n', gif_file);
+    end
+    fprintf('  %s\n', mat_file);
+end
+
+function save_lemniscate_gif(hist_t, hist_poi, hist_ref, hist_error_xy, hist_limo, cfg, gif_file)
+    frame_step = max(1, round(cfg.gif_frame_step));
+    delay = 1.0 / max(1, cfg.gif_fps);
+    idx = 1:frame_step:numel(hist_t);
+    n_frames = numel(idx);
+
+    margin = 0.20;
+    all_x = [hist_ref(1, :), hist_poi(1, :), hist_limo(1, :)];
+    all_y = [hist_ref(2, :), hist_poi(2, :), hist_limo(2, :)];
+    x_lim = [min(all_x) - margin, max(all_x) + margin];
+    y_lim = [min(all_y) - margin, max(all_y) + margin];
+
+    fig = figure('Name', 'Lemniscate GIF', 'Visible', 'off', ...
+        'Position', [100, 100, 720, 640], 'Color', 'w');
+    ax = axes('Parent', fig);
+    hold(ax, 'on');
+    axis(ax, 'equal');
+    grid(ax, 'on');
+    xlabel(ax, 'X (m)');
+    ylabel(ax, 'Y (m)');
+    xlim(ax, x_lim);
+    ylim(ax, y_lim);
+
+    draw_obstacle_patches(ax, cfg);
+    plot(ax, hist_ref(1, :), hist_ref(2, :), 'Color', [1.0, 0.6, 0.6], ...
+        'LineStyle', '--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
+
+    h_trail_poi = plot(ax, nan, nan, 'b-', 'LineWidth', 1.5);
+    h_trail_limo = plot(ax, nan, nan, 'Color', [0.5, 0.5, 0.5], ...
+        'LineWidth', 1.0, 'HandleVisibility', 'off');
+    h_ref_now = plot(ax, nan, nan, 'r.', 'MarkerSize', 18);
+    h_poi_now = plot(ax, nan, nan, 'bo', 'MarkerFaceColor', 'b', 'MarkerSize', 8);
+    h_limo_body = plot(ax, nan, nan, 'ks', 'MarkerFaceColor', [0.15, 0.15, 0.15], 'MarkerSize', 7);
+    h_limo_heading = plot(ax, nan, nan, 'k-', 'LineWidth', 2.0, 'HandleVisibility', 'off');
+    h_poi_link = plot(ax, nan, nan, 'b-', 'LineWidth', 0.8, 'HandleVisibility', 'off');
+    h_title = title(ax, '', 'FontSize', 11);
+
+    legend(ax, [h_trail_poi, h_ref_now, h_poi_now, h_limo_body], ...
+        {'Trajetória PoI', 'Referência (t)', 'PoI (t)', 'Chassi LIMO (t)'}, ...
+        'Location', 'northeast');
+
+    fprintf('Gerando GIF (%d frames)... ', n_frames);
+
+    for fi = 1:n_frames
+        k = idx(fi);
+        t_now = hist_t(k);
+        x1 = hist_limo(1, k);
+        y1 = hist_limo(2, k);
+        psi1 = hist_limo(3, k);
+        poi = hist_poi(:, k);
+        ref = hist_ref(:, k);
+        err = norm(hist_error_xy(:, k));
+
+        set(h_trail_poi, 'XData', hist_poi(1, 1:k), 'YData', hist_poi(2, 1:k));
+        set(h_trail_limo, 'XData', hist_limo(1, 1:k), 'YData', hist_limo(2, 1:k));
+        set(h_ref_now, 'XData', ref(1), 'YData', ref(2));
+        set(h_poi_now, 'XData', poi(1), 'YData', poi(2));
+        set(h_limo_body, 'XData', x1, 'YData', y1);
+
+        head_len = 0.10;
+        set(h_limo_heading, 'XData', [x1, x1 + head_len * cos(psi1)], ...
+            'YData', [y1, y1 + head_len * sin(psi1)]);
+        set(h_poi_link, 'XData', [x1, poi(1)], 'YData', [y1, poi(2)]);
+
+        set(h_title, 'String', sprintf('t = %.1f s  |  erro PoI = %.3f m  |  frame %d/%d', ...
+            t_now, err, fi, n_frames));
+
+        drawnow limitrate;
+        frame = getframe(fig);
+        im = frame2im(frame);
+        [imind, cm] = rgb2ind(im, 256);
+
+        if fi == 1
+            imwrite(imind, cm, gif_file, 'gif', 'Loopcount', inf, 'DelayTime', delay);
+        else
+            imwrite(imind, cm, gif_file, 'gif', 'WriteMode', 'append', 'DelayTime', delay);
+        end
+    end
+
+    close(fig);
+    fprintf('OK\n');
+end
+
+function draw_obstacle_patches(ax, cfg)
+    theta = linspace(0, 2 * pi, 100);
+    cx = cfg.obstacle_center(1);
+    cy = cfg.obstacle_center(2);
+    influence_r = cfg.obstacle_influence_radius;
+
+    patch(ax, cx + influence_r * cos(theta), ...
+        cy + influence_r * sin(theta), ...
+        [0.47, 0.45, 0.42], 'FaceAlpha', 0.08, 'EdgeColor', [0.47, 0.45, 0.42], ...
+        'LineStyle', '--', 'DisplayName', sprintf('Influência (R=%.2f m)', influence_r));
+    patch(ax, cx + cfg.obstacle_radius * cos(theta), ...
+        cy + cfg.obstacle_radius * sin(theta), ...
+        [0.47, 0.45, 0.42], 'FaceAlpha', 0.45, 'EdgeColor', [0.35, 0.33, 0.30], ...
+        'DisplayName', 'Obstáculo');
 end
