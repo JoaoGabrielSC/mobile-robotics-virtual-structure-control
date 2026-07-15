@@ -30,6 +30,7 @@ cfg.audit_enabled = true;
 cfg.audit_period = 1.0;
 cfg.audit_dir = fullfile('results', 'formacao_2');
 
+TRAJ = 1; % 0: LIMO para em [0;0] e Bebop em [0;0;1], 1: lemniscata
 rho_f = 1.5;
 alpha_f = 0;
 beta_f = pi / 2;
@@ -58,10 +59,11 @@ if cfg.audit_enabled
     fprintf(audit_fid, '=== AUDITORIA DE FORMAÇÃO LIMO-BEBOP ===\n');
     fprintf(audit_fid, 'Início: %s\n', datestr(now, 'yyyy-mm-dd HH:MM:SS'));
     fprintf(audit_fid, 'Modo Bebop: %s\n', MODO_BEBOP);
+    fprintf(audit_fid, 'Trajetória: %d\n', TRAJ);
     fprintf(audit_fid, 'Amostragem de auditoria: %.2f s\n', cfg.audit_period);
     if strcmp(MODO_BEBOP, 'off')
-        fprintf(audit_fid, ['AVISO: Bebop desligado. A pose usada na auditoria é o alvo ', ...
-            'virtual p2d; os comandos calculados não são enviados.\n']);
+        fprintf(audit_fid, ['AVISO: Bebop desligado. A pose é gerada por uma planta virtual ', ...
+            'com v_dot=f1*u-f2*v; os comandos calculados não são enviados.\n']);
     end
     fprintf(audit_fid, '\n');
     fprintf('Auditoria da formação: %s\n', audit_file);
@@ -97,7 +99,13 @@ end
 
 [x1, y1, z1, psi1] = ler_pose(pose_L);
 if strcmp(MODO_BEBOP, 'off')
-    x2 = x1; y2 = y1; z2 = z1 + rho_f; psi2 = 0;
+    virtual_B.p = [x1; y1; z1 + rho_f];
+    virtual_B.psi = 0;
+    virtual_B.v_body = zeros(4, 1);
+    x2 = virtual_B.p(1);
+    y2 = virtual_B.p(2);
+    z2 = virtual_B.p(3);
+    psi2 = virtual_B.psi;
 else
     [x2, y2, z2, psi2] = ler_pose(pose_B);
 end
@@ -106,14 +114,18 @@ v_limo_state = [0; 0];
 vd_B_ant = [0; 0; 0; 0];
 poseB_ant = [x2; y2; z2];
 poseB_psi_ant = psi2;
+t_ant = 0;
 
 H.t = zeros(1, N);
 H.poi = zeros(2, N);
 H.ref = zeros(2, N);
 H.p2 = zeros(3, N);
+H.p2d = zeros(3, N);
+H.erroB = zeros(3, N);
 H.cmdL = zeros(2, N);
 H.cmdB = zeros(4, N);
 H.dobs = zeros(1, N);
+H.satB = false(1, N);
 
 fprintf('Iniciando formação. Botão %d do joystick para parar.\n', BTN_STOP);
 t0 = tic;
@@ -122,6 +134,11 @@ try
     for k = 1:N
         tloop = tic;
         t = toc(t0);
+        if k == 1
+            dt = cfg.T;
+        else
+            dt = max(t - t_ant, 1e-3);
+        end
 
         btns = button(J);
         if numel(btns) >= BTN_STOP && btns(BTN_STOP)
@@ -131,7 +148,10 @@ try
 
         [x1, y1, z1, psi1] = ler_pose(pose_L);
         if strcmp(MODO_BEBOP, 'off')
-            x2 = x1; y2 = y1; z2 = z1 + rho_f; psi2 = 0;
+            x2 = virtual_B.p(1);
+            y2 = virtual_B.p(2);
+            z2 = virtual_B.p(3);
+            psi2 = virtual_B.psi;
         else
             [x2, y2, z2, psi2] = ler_pose(pose_B);
         end
@@ -139,37 +159,47 @@ try
         poi = [x1 + cfg.a1 * cos(psi1); y1 + cfg.a1 * sin(psi1)];
 
         % Mesmo laço externo e interno usados em limoControl.m.
-        [vd_L, ref_xy] = lemniscate_outer_loop(t, poi, psi1, cfg);
+        [vd_L, ref_xy] = limo_reference_controller(t, poi, psi1, TRAJ, cfg);
         v_limo_state = limo_inner_loop(vd_L, v_limo_state, cfg);
         cmdL = v_limo_state;
 
-        % Formação do Bebop: alvo verticalmente acima do PoI do LIMO.
-        p2d = [poi(1) + rho_f * cos(alpha_f) * cos(beta_f);
-               poi(2) + rho_f * sin(alpha_f) * cos(beta_f);
-               z1 + rho_f * sin(beta_f)];
+        if TRAJ == 0
+            p2d = [0; 0; 1];
+        else
+            p2d = [poi(1) + rho_f * cos(alpha_f) * cos(beta_f);
+                   poi(2) + rho_f * sin(alpha_f) * cos(beta_f);
+                   z1 + rho_f * sin(beta_f)];
+        end
         p2 = [x2; y2; z2];
         vel_poi_world = [cos(psi1), -cfg.a1 * sin(psi1);
                          sin(psi1),  cfg.a1 * cos(psi1)] * cmdL;
+        if TRAJ == 0
+            vel_poi_world = [0; 0];
+        end
         dx2 = [vel_poi_world; 0] + Ls_B * tanh(Ls_B \ (Kp_B * (p2d - p2)));
 
         A2inv = [cos(psi2), sin(psi2), 0;
                  -sin(psi2), cos(psi2), 0;
                  0, 0, 1];
-        velWB = ([x2; y2; z2] - poseB_ant) / cfg.T;
-        psidot2 = wrap_pi(psi2 - poseB_psi_ant) / cfg.T;
-        vB_meas = [A2inv * velWB; psidot2];
+        if strcmp(MODO_BEBOP, 'off')
+            vB_meas = virtual_B.v_body;
+        else
+            velWB = (p2 - poseB_ant) / dt;
+            psidot2 = wrap_pi(psi2 - poseB_psi_ant) / dt;
+            vB_meas = [A2inv * velWB; psidot2];
+        end
         vd_B = [A2inv * dx2; 0];
         if k == 1
             dvd_B = zeros(4, 1);
         else
-            dvd_B = (vd_B - vd_B_ant) / cfg.T;
+            dvd_B = (vd_B - vd_B_ant) / dt;
         end
         cmdB_raw = f1 \ (dvd_B + KD_B * (vd_B - vB_meas) + f2 * vB_meas);
         cmdB = saturar(cmdB_raw, umax_B);
 
         audit_step = max(1, round(cfg.audit_period / cfg.T));
         if audit_fid >= 0 && (k == 1 || mod(k - 1, audit_step) == 0)
-            registrar_auditoria(audit_fid, t, MODO_BEBOP, poi, ref_xy, psi1, ...
+            registrar_auditoria(audit_fid, t, dt, MODO_BEBOP, TRAJ, poi, ref_xy, psi1, ...
                 p2, p2d, psi2, A2inv, dx2, vB_meas, vd_B, dvd_B, ...
                 cmdB_raw, cmdB, f1, f2, KD_B);
         end
@@ -186,19 +216,25 @@ try
             msg_B.Linear.Z = cmdB(3);
             msg_B.Angular.Z = cmdB(4);
             send(pub_B, msg_B);
+        else
+            virtual_B = avancar_bebop_virtual(virtual_B, cmdB, dt, f1, f2);
         end
 
         H.t(k) = t;
         H.poi(:, k) = poi;
         H.ref(:, k) = ref_xy;
         H.p2(:, k) = p2;
+        H.p2d(:, k) = p2d;
+        H.erroB(:, k) = p2d - p2;
         H.cmdL(:, k) = cmdL;
         H.cmdB(:, k) = cmdB;
         H.dobs(k) = norm(poi - cfg.obstacle_center);
+        H.satB(k) = any(abs(cmdB_raw - cmdB) > 1e-9);
         kf = k;
         poseB_ant = p2;
         poseB_psi_ant = psi2;
         vd_B_ant = vd_B;
+        t_ant = t;
 
         if mod(k, 30) == 0
             fprintf('t=%5.1fs | PoI=(%+.2f,%+.2f) ref=(%+.2f,%+.2f) | v=%+.2f w=%+.2f\n', ...
@@ -228,6 +264,18 @@ end
 pause(0.5);
 rosshutdown;
 if audit_fid >= 0
+    if kf > 0
+        idx_audit = 1:kf;
+        erro_norma = vecnorm(H.erroB(:, idx_audit), 2, 1);
+        fprintf(audit_fid, '=== RESUMO DA EXECUÇÃO ===\n');
+        fprintf(audit_fid, 'Amostras: %d\n', kf);
+        fprintf(audit_fid, 'Erro RMS do Bebop [m]: %.6f\n', sqrt(mean(erro_norma.^2)));
+        fprintf(audit_fid, 'Erro máximo do Bebop [m]: %.6f\n', max(erro_norma));
+        fprintf(audit_fid, 'Erro final do Bebop [m]: %.6f\n', erro_norma(end));
+        fprintf(audit_fid, 'Distância mínima LIMO-obstáculo [m]: %.6f\n', min(H.dobs(idx_audit)));
+        fprintf(audit_fid, 'Amostras com saturação do Bebop: %d de %d\n', ...
+            nnz(H.satB(idx_audit)), kf);
+    end
     fprintf(audit_fid, 'Fim: %s\n', datestr(now, 'yyyy-mm-dd HH:MM:SS'));
     fclose(audit_fid);
     fprintf('Auditoria salva em %s\n', audit_file);
@@ -265,8 +313,13 @@ function [ref_xy, ref_xy_dot] = lemniscata_reference(t)
                   0.75 * (4 * pi / 40) * cos(phase_y)];
 end
 
-function [v_d, ref_xy] = lemniscate_outer_loop(t, poi, psi, cfg)
-    [ref_xy, ref_xy_dot] = lemniscata_reference(t);
+function [v_d, ref_xy] = limo_reference_controller(t, poi, psi, traj, cfg)
+    if traj == 1
+        [ref_xy, ref_xy_dot] = lemniscata_reference(t);
+    else
+        ref_xy = [0; 0];
+        ref_xy_dot = [0; 0];
+    end
     err_xy = ref_xy - poi;
     err_xy = attenuate_crossing_error(err_xy, ref_xy_dot, poi, cfg);
     [kq_eff, lq_eff] = crossing_gain_scale(poi, cfg);
@@ -362,7 +415,7 @@ function v_state = limo_inner_loop(v_d, v_state, cfg)
     v_state = [saturar(v_state(1), cfg.v_max); saturar(v_state(2), cfg.w_max)];
 end
 
-function registrar_auditoria(fid, t, modo_bebop, poi, ref_xy, psi1, ...
+function registrar_auditoria(fid, t, dt, modo_bebop, traj, poi, ref_xy, psi1, ...
         p2, p2d, psi2, A2inv, dx2, vB_meas, vd_B, dvd_B, ...
         cmdB_raw, cmdB, f1, f2, KD_B)
     A2 = A2inv.';
@@ -375,6 +428,7 @@ function registrar_auditoria(fid, t, modo_bebop, poi, ref_xy, psi1, ...
 
     fprintf(fid, '================================================================\n');
     fprintf(fid, 't = %.3f s | modo Bebop = %s\n', t, modo_bebop);
+    fprintf(fid, 'TRAJ = %d | dt efetivo = %.6f s\n', traj, dt);
     fprintf(fid, '--- LIMO E REFERÊNCIA ---\n');
     fprintf(fid, 'PoI LIMO [m]:\n'); fprintf(fid, '  %+.6f\n', poi);
     fprintf(fid, 'Referência lemniscata [m]:\n'); fprintf(fid, '  %+.6f\n', ref_xy);
@@ -416,6 +470,16 @@ function registrar_auditoria(fid, t, modo_bebop, poi, ref_xy, psi1, ...
     fprintf(fid, 'f1*cmd_saturado - f2*vB_medida:\n');
     fprintf(fid, '  %+.6f\n', aceleracao_modelo_saturada);
     fprintf(fid, '\n');
+end
+
+function estado = avancar_bebop_virtual(estado, u, dt, f1, f2)
+    % Planta usada apenas em MODO_BEBOP='off'.
+    R = [cos(estado.psi), -sin(estado.psi), 0;
+         sin(estado.psi), cos(estado.psi), 0;
+         0, 0, 1];
+    estado.p = estado.p + dt * R * estado.v_body(1:3);
+    estado.psi = wrap_pi(estado.psi + dt * estado.v_body(4));
+    estado.v_body = estado.v_body + dt * (f1 * u - f2 * estado.v_body);
 end
 
 function imprimir_matriz(fid, M)
