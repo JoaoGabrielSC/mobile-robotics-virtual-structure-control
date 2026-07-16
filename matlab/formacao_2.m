@@ -5,6 +5,8 @@ clear; clc; close all;
 %% Configuração
 cfg.T = 1 / 30;
 cfg.Tsim = 120;
+cfg.takeoff_wait_s = 5;
+cfg.preparation_time_s = 10;
 cfg.v_max = 0.30;
 cfg.w_max = 1.20;
 cfg.a1 = 0.10;
@@ -43,7 +45,9 @@ umax_B = 1.0;
 
 MODO_BEBOP = 'teste'; % 'off', 'teste' ou 'voo'
 BTN_STOP = 1;
-N = round(cfg.Tsim / cfg.T);
+use_preparation = strcmp(MODO_BEBOP, 'voo') && cfg.preparation_time_s > 0;
+preparation_time_s = use_preparation * cfg.preparation_time_s;
+N = round((cfg.Tsim + preparation_time_s) / cfg.T);
 
 audit_fid = -1;
 if cfg.audit_enabled
@@ -60,6 +64,10 @@ if cfg.audit_enabled
     fprintf(audit_fid, 'Início: %s\n', datestr(now, 'yyyy-mm-dd HH:MM:SS'));
     fprintf(audit_fid, 'Modo Bebop: %s\n', MODO_BEBOP);
     fprintf(audit_fid, 'Trajetória: %d\n', TRAJ);
+    fprintf(audit_fid, 'Espera após takeoff: %.1f s\n', ...
+        strcmp(MODO_BEBOP, 'voo') * cfg.takeoff_wait_s);
+    fprintf(audit_fid, 'Preparação antes da trajetória: %.1f s\n', ...
+        preparation_time_s);
     fprintf(audit_fid, 'Amostragem de auditoria: %.2f s\n', cfg.audit_period);
     if strcmp(MODO_BEBOP, 'off')
         fprintf(audit_fid, ['AVISO: Bebop desligado. A pose é gerada por uma planta virtual ', ...
@@ -94,7 +102,9 @@ end
 
 if strcmp(MODO_BEBOP, 'voo')
     send(pub_TO, msg_TO);
-    pause(5);
+    fprintf('Takeoff enviado. Aguardando %.1f s para estabilização inicial.\n', ...
+        cfg.takeoff_wait_s);
+    pause(cfg.takeoff_wait_s);
 end
 
 [x1, y1, z1, psi1] = ler_pose(pose_L);
@@ -127,7 +137,12 @@ H.cmdB = zeros(4, N);
 H.dobs = zeros(1, N);
 H.satB = false(1, N);
 
-fprintf('Iniciando formação. Botão %d do joystick para parar.\n', BTN_STOP);
+if use_preparation
+    fprintf(['Preparando o Bebop por %.1f s com LIMO parado. ', ...
+        'Botão %d do joystick para parar.\n'], preparation_time_s, BTN_STOP);
+else
+    fprintf('Iniciando formação. Botão %d do joystick para parar.\n', BTN_STOP);
+end
 t0 = tic;
 kf = 0;
 try
@@ -157,13 +172,23 @@ try
         end
 
         poi = [x1 + cfg.a1 * cos(psi1); y1 + cfg.a1 * sin(psi1)];
+        em_preparacao = t < preparation_time_s;
+        t_traj = max(0, t - preparation_time_s);
 
         % Mesmo laço externo e interno usados em limoControl.m.
-        [vd_L, ref_xy] = limo_reference_controller(t, poi, psi1, TRAJ, cfg);
-        v_limo_state = limo_inner_loop(vd_L, v_limo_state, cfg);
-        cmdL = v_limo_state;
+        if em_preparacao
+            ref_xy = poi;
+            v_limo_state = [0; 0];
+            cmdL = [0; 0];
+        else
+            [vd_L, ref_xy] = limo_reference_controller(t_traj, poi, psi1, TRAJ, cfg);
+            v_limo_state = limo_inner_loop(vd_L, v_limo_state, cfg);
+            cmdL = v_limo_state;
+        end
 
-        if TRAJ == 0
+        if em_preparacao
+            p2d = [poi; z1 + rho_f];
+        elseif TRAJ == 0
             p2d = [0; 0; 1];
         else
             p2d = [poi(1) + rho_f * cos(alpha_f) * cos(beta_f);
@@ -199,7 +224,8 @@ try
 
         audit_step = max(1, round(cfg.audit_period / cfg.T));
         if audit_fid >= 0 && (k == 1 || mod(k - 1, audit_step) == 0)
-            registrar_auditoria(audit_fid, t, dt, MODO_BEBOP, TRAJ, poi, ref_xy, psi1, ...
+            registrar_auditoria(audit_fid, t, t_traj, em_preparacao, dt, MODO_BEBOP, ...
+                TRAJ, poi, ref_xy, psi1, ...
                 p2, p2d, psi2, A2inv, dx2, vB_meas, vd_B, dvd_B, ...
                 cmdB_raw, cmdB, f1, f2, KD_B);
         end
@@ -237,8 +263,13 @@ try
         t_ant = t;
 
         if mod(k, 30) == 0
-            fprintf('t=%5.1fs | PoI=(%+.2f,%+.2f) ref=(%+.2f,%+.2f) | v=%+.2f w=%+.2f\n', ...
-                t, poi(1), poi(2), ref_xy(1), ref_xy(2), cmdL(1), cmdL(2));
+            if em_preparacao
+                fprintf('Preparação t=%4.1fs | alvo Bebop=(%+.2f,%+.2f,%+.2f)\n', ...
+                    t, p2d(1), p2d(2), p2d(3));
+            else
+                fprintf('t=%5.1fs | PoI=(%+.2f,%+.2f) ref=(%+.2f,%+.2f) | v=%+.2f w=%+.2f\n', ...
+                    t_traj, poi(1), poi(2), ref_xy(1), ref_xy(2), cmdL(1), cmdL(2));
+            end
         end
         pause(max(0, cfg.T - toc(tloop)));
     end
@@ -415,7 +446,7 @@ function v_state = limo_inner_loop(v_d, v_state, cfg)
     v_state = [saturar(v_state(1), cfg.v_max); saturar(v_state(2), cfg.w_max)];
 end
 
-function registrar_auditoria(fid, t, dt, modo_bebop, traj, poi, ref_xy, psi1, ...
+function registrar_auditoria(fid, t, t_traj, em_preparacao, dt, modo_bebop, traj, poi, ref_xy, psi1, ...
         p2, p2d, psi2, A2inv, dx2, vB_meas, vd_B, dvd_B, ...
         cmdB_raw, cmdB, f1, f2, KD_B)
     A2 = A2inv.';
@@ -428,6 +459,7 @@ function registrar_auditoria(fid, t, dt, modo_bebop, traj, poi, ref_xy, psi1, ..
 
     fprintf(fid, '================================================================\n');
     fprintf(fid, 't = %.3f s | modo Bebop = %s\n', t, modo_bebop);
+    fprintf(fid, 't da trajetória = %.3f s | preparação = %d\n', t_traj, em_preparacao);
     fprintf(fid, 'TRAJ = %d | dt efetivo = %.6f s\n', traj, dt);
     fprintf(fid, '--- LIMO E REFERÊNCIA ---\n');
     fprintf(fid, 'PoI LIMO [m]:\n'); fprintf(fid, '  %+.6f\n', poi);
