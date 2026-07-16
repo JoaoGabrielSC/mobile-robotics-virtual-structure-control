@@ -1,439 +1,177 @@
-# robotica-sim
+# Formação virtual LIMO–Bebop 2
 
-Simulador de estrutura virtual para o robô terrestre **LIMO** e o quadrirrotor **Parrot Bebop 2**, desenvolvido no contexto da disciplina _Robótica Móvel_ (UFES, 2026/1).
+Projeto da disciplina **Robótica Móvel — UFES (2026/1)**. O repositório reúne:
 
-Este repositório implementa em Python a arquitetura **Inner–Outer Loop** descrita no enunciado: controlador cinemático da formação (laço externo), compensadores dinâmicos dos dois robôs (laço interno), desvio de obstáculo em espaço nulo e integração numérica da planta.
+- um simulador Python da estrutura virtual;
+- controladores MATLAB conectados a ROS, OptiTrack, LIMO e Bebop 2;
+- uma auditoria em TXT e um visualizador Python para validar a execução offline.
 
-Base de conhecimento (slides + lab + código): [KNOWLEDGE.md](KNOWLEDGE.md).
+> O Bebop 2 é a plataforma aérea adotada neste projeto. Não use os scripts destinados ao Crazyflie para executar a formação LIMO–Bebop.
 
----
+## Demonstração
 
-# Especificação do Trabalho – Robótica Móvel (2026/1)
+Reprodução da auditoria com o LIMO, Bebop virtual, referência da lemniscata, alvo da formação e obstáculo:
+
+![Reprodução da formação LIMO–Bebop](docs/reproducao.gif)
 
 ## Objetivo
 
-Projetar e implementar um sistema de controle para uma **estrutura virtual** composta por:
+Controlar uma estrutura virtual formada por um LIMO diferencial e um Bebop 2. A arquitetura é composta por:
 
-- 1 robô terrestre diferencial **LIMO**;
-- 1 quadrirrotor **Parrot Bebop 2**.
+1. controlador cinemático de formação;
+2. desvio de obstáculo por espaço nulo;
+3. laço dinâmico do LIMO;
+4. laço dinâmico do Bebop;
+5. integração da planta virtual no modo de auditoria.
 
-O controlador deverá utilizar a estratégia de **Estrutura Virtual (Virtual Structure)**, composta por:
+O ponto de interesse do LIMO é deslocado `a = 0.10 m` à frente do centro de gravidade. Na trajetória de formação, o Bebop permanece verticalmente acima desse ponto, a `1.5 m`.
 
-- controlador cinemático da formação (laço externo);
-- compensador dinâmico para o LIMO (laço interno);
-- compensador dinâmico para o Bebop 2 (laço interno).
+## Referência e obstáculo
 
-Em outras palavras, o sistema deverá possuir uma arquitetura **Inner-Outer Loop**.
-
----
-
-## Estrutura da formação
-
-O ponto de controle da formação é definido no **ponto de controle do robô LIMO**, deslocado:
-
-- 10 cm do centro de gravidade;
-- ao longo do eixo X do robô;
-- ângulo de deslocamento igual a 0°.
-
-Ou seja,
-
-- a = 10 cm
-- direção = eixo X do robô
-
----
-
-## Modelos utilizados
-
-### LIMO
-
-Utilizar o modelo dinâmico fornecido pelo professor, juntamente com os parâmetros disponibilizados no enunciado.
-
-### Bebop 2
-
-O modelo dinâmico é dado por
+Com `TRAJ = 1`, a referência é uma lemniscata:
 
 $$
-\dot{\mathbf v}=f_1\mathbf u-f_2\mathbf v
+x_d = 0.75\sin\left(\frac{2\pi t}{40}\right), \qquad
+y_d = 0.75\sin\left(\frac{4\pi t}{40}\right)
 $$
 
-onde os parâmetros fornecidos correspondem às seguintes limitações:
+O controlador usa período nominal de `1/30 s`. O obstáculo é centrado em `[-0.20; 0.425] m`, com raio físico de `0.15 m` e zona de influência de `0.25 m`.
 
-- arfagem (θ) limitada a 5°
-- rolagem (φ) limitada a 5°
-- velocidade vertical máxima:
+## Estrutura do repositório
 
-$$
-v_z = 1\;\mathrm{m/s}
-$$
-
-- velocidade angular máxima
-
-$$
-\dot\psi =100\;\mathrm{rad/s}
-$$
-
----
-
-## Trajetória desejada
-
-A formação deverá seguir uma **lemniscata de Bernoulli** no plano XY.
-
-A referência é
-
-$$
-q_d=
-[x_f,\;
-y_f,\;
-z_f,\;
-\rho_f,\;
-\alpha_f,\;
-\beta_f]^T
-$$
-
-onde
-
-- altura da formação:
-
-$$
-\rho_f=1.5\;\mathrm{m}
-$$
-
-- orientação:
-
-$$
-\alpha_f=0^\circ
-$$
-
-$$
-\beta_f=90^\circ
-$$
-
-As coordenadas da trajetória são
-
-$$
-x_d=0.75\sin\left(\frac{2\pi t}{40}\right)
-$$
-
-$$
-y_d=0.75\sin\left(\frac{4\pi t}{40}\right)
-$$
-
----
-
-## Frequência do controlador
-
-O loop de controle deverá executar a
-
-- 30 Hz
-
-Logo,
-
-$$
-T=\frac1{30}\;\mathrm{s}
-$$
-
----
-
-## Condições iniciais
-
-### LIMO
-
-Posição inicial
-
-```
-(0.40 , -0.25 , 0.00) m
+```text
+matlab/
+  formacao_2.m                    Controle e auditoria LIMO–Bebop
+  limoControl.m                    Teste isolado do LIMO
+  test_bebop.m                     Testes isolados do Bebop
+  audit_formacao_*.txt             Auditorias geradas em execução
+sim/
+  visualizar_auditoria_formacao.py Visualizador de auditoria
+src/
+  main.py                          Simulador Python da formação
+docs/
+  reproducao.gif                   Demonstração da auditoria
 ```
 
-Orientação inicial
+## Simulador Python
 
-```
-alinhado ao eixo X global
-```
+### Pré-requisitos
 
-### Drone
+- Python 3.12 ou superior;
+- [uv](https://docs.astral.sh/uv).
 
-Inicialmente
-
-- aproximadamente 30 cm à esquerda do LIMO;
-- alinhado com o mesmo eixo X.
-
----
-
-## Obstáculo
-
-Considerar um obstáculo cilíndrico fixo.
-
-Centro da base
-
-```
-(-0.20 , 0.425 , 0.00) m
-```
-
-Raio
-
-```
-0.15 m
-```
-
-Representação física sugerida:
-
-- um balde do laboratório.
-
----
-
-## Desvio de obstáculo
-
-O trabalho exige utilizar
-
-**Controle baseado em Espaço Nulo (Null Space Control)**.
-
-A prioridade deverá ser
-
-1. evitar obstáculo;
-2. controlar a formação.
-
-A manobra evasiva somente deverá ser ativada quando o robô entrar na região de influência.
-
-Raio da região de influência
-
-```
-0.50 m
-```
-
-Centro
-
-```
-centro do obstáculo
-```
-
-Fora dessa região, apenas o controlador da formação deverá atuar.
-
----
-
-## Código MATLAB
-
-O professor disponibilizou exemplos de integração com ROS.
-
-Os principais recursos são:
-
-### Inicialização
-
-```matlab
-rosshutdown;
-rosinit('192.168.0.100');
-```
-
-### Publicadores ROS
-
-Criar publicadores para
-
-- cmd_vel
-- takeoff
-- land
-
-Exemplo
-
-```matlab
-pub_cmdvel = rospublisher('/NAMESPACE/cmd_vel','geometry_msgs/Twist');
-```
-
-### Subscriber
-
-Leitura da pose pelo OptiTrack
-
-```matlab
-pose = rossubscriber('vrpn_client_node/NAMESPACE/pose');
-```
-
-### Joystick
-
-```matlab
-J = vrjoystick(1);
-```
-
-### Durante o loop
-
-Enviar comandos de velocidade
-
-```matlab
-send(pub_cmdvel,msg_cmdvel)
-```
-
-### Drone
-
-Decolagem
-
-```matlab
-send(pub_takeoff,msg_takeoff);
-```
-
-Pouso
-
-```matlab
-send(pub_land,msg_land);
-```
-
-### Leitura da pose
-
-Ler
-
-- posição
-- orientação (quaternion)
-- converter quaternion para ângulos de Euler
-
-Exemplo
-
-```matlab
-quat = [w x y z];
-EulZYX = quat2eul(quat);
-```
-
-### Encerramento
-
-Ao finalizar o programa
-
-```matlab
-rosshutdown;
-```
-
----
-
-## Entregáveis esperados
-
-O projeto deverá conter:
-
-- controlador cinemático da estrutura virtual;
-- compensador dinâmico do LIMO;
-- compensador dinâmico do Bebop 2;
-- arquitetura em laço interno e laço externo;
-- seguimento da trajetória em forma de lemniscata;
-- manutenção da altura do drone em 1,5 m;
-- controle da formação entre os dois robôs;
-- desvio de obstáculo utilizando Controle em Espaço Nulo;
-- implementação em MATLAB utilizando ROS;
-- leitura da pose via OptiTrack;
-- envio de comandos aos robôs via tópicos ROS.
-
----
-
-# Simulador Python (este repositório)
-
-## Execução em hardware (MATLAB + ROS)
-
-O arquivo `matlab/main.m` implementa o mesmo controlador conectado aos robôs reais do LAB-AIR, seguindo `matlab/refence.m` (código validado pelo professor).
-
-```matlab
-run('matlab/main.m')
-```
-
-### Antes de rodar
-
-1. **Motive:** corpos rígidos `L1` (LIMO) e `cfX` (Crazyflie, ex.: `cf7`)
-2. **ROS:**
-
-   ```bash
-   roslaunch natnet_ros_cpp natnet_ros.launch
-   roslaunch crazyflie_server crazyflie_server.launch cfs:=[X]
-   ```
-
-3. **LIMO** (SSH `agilex@192.168.0.XXX`, senha `agx`):
-
-   ```bash
-   roslaunch limo_base limo_base.launch namespace:=L1
-   ```
-
-4. **MATLAB:** `JoyControl.m` no path; ajuste em `matlab/main.m`:
-   - `cfg.ros_ip` — IP do servidor ROS (`192.168.0.100`)
-   - `cfg.limo_namespace` — `L1`
-   - `cfg.drone_namespace` — ex.: `cf7`
-
-### Interface ROS usada
-
-| Recurso               | Tópico / serviço                               |
-| --------------------- | ---------------------------------------------- |
-| Pose LIMO/drone       | `/natnet_ros/<NAMESPACE>/pose` (`PoseStamped`) |
-| cmd_vel LIMO          | `/L1/cmd_vel` → `[v; ω]`                       |
-| cmd_vel Crazyflie     | `/cfX/cmd_vel` → `[φ; θ; ż; ψ̇]`                |
-| Takeoff / land / kill | serviços `std_srvs/Trigger`                    |
-| Joystick              | `JoyControl` — botão 1: parar; botão 2: kill   |
-
-O simulador Python permanece disponível para validação offline antes dos testes no laboratório.
-
-## Pré-requisitos
-
-- [uv](https://docs.astral.sh/uv/) package manager
-
-## Instalação
+### Instalação e execução
 
 ```bash
 uv sync
-```
-
-## Execução
-
-```bash
 uv run python src/main.py --output-dir results --no-show
 ```
 
-Ver opções disponíveis:
+Para ver todas as opções:
 
 ```bash
 uv run python src/main.py --help
 ```
 
-Animar os dois robôs:
+Para gerar a animação do simulador:
 
 ```bash
 uv run python src/main.py --t_final 40 --anim
 ```
 
-## Parâmetros da CLI
+## Controle em hardware: MATLAB, ROS e OptiTrack
 
-| Flag           | Padrão   | Descrição                                       |
-| -------------- | -------- | ----------------------------------------------- |
-| `--t_final`    | `100.0`  | Tempo total de simulação (s)                    |
-| `--dt`         | `1/30`   | Período de amostragem T (30 Hz)                 |
-| `--kq`         | `1.2`    | Ganho proporcional do controlador da formação   |
-| `--lq`         | `0.8`    | Limite de saturação da tangente hiperbólica     |
-| `--kd_limo`    | `4.0`    | Ganho do compensador dinâmico do LIMO           |
-| `--anim`       | off      | Anima a movimentação do LIMO e do Bebop 2       |
-| `--output-dir` | `output` | Diretório onde os gráficos são salvos           |
-| `--no-show`    | off      | Salva os gráficos sem abrir janelas interativas |
+O arquivo principal para o par LIMO–Bebop é `matlab/formacao_2.m`.
 
-## Saída
+### Pré-requisitos de laboratório
 
-Por padrão, os gráficos são salvos em `output/`:
+1. Inicie o ROS master em `192.168.0.100`.
+2. Inicie a ponte OptiTrack:
 
-- `robots.png` — trajetórias 3D e vista superior, com obstáculo
-- `formation_errors.png` — referência vs. estado da formação e erros
+   ```bash
+   roslaunch natnet_ros_cpp natnet_ros.launch
+   ```
 
-## Estrutura do projeto
+3. No Motive, configure os corpos rígidos `L1` e `B1`.
+4. Inicie o LIMO no modo diferencial/4WD:
 
+   ```bash
+   roslaunch limo_base limo_base.launch namespace:=L1
+   ```
+
+5. Inicie o driver do Bebop no namespace `B1`.
+6. Conecte o joystick antes de executar o script.
+
+O script usa os tópicos abaixo:
+
+| Recurso | Tópico |
+| --- | --- |
+| Pose LIMO | `/natnet_ros/L1/pose` |
+| Comando LIMO | `/L1/cmd_vel` |
+| Pose Bebop | `/natnet_ros/B1/pose` |
+| Comando Bebop | `/B1/cmd_vel` |
+| Decolagem / pouso | `/B1/takeoff`, `/B1/land` |
+
+### Modos de execução
+
+Edite estas variáveis no início de `matlab/formacao_2.m`:
+
+```matlab
+TRAJ = 1;
+MODO_BEBOP = 'off';
 ```
-src/
-├── main.py       # Ponto de entrada
-├── config.py     # Dataclass de configuração da simulação
-├── cli.py        # Parsing de argumentos da CLI
-├── simulator.py  # Loop de simulação, controladores e integração da planta
-└── plotting.py   # Visualização e exportação dos gráficos
+
+| Configuração | Comportamento |
+| --- | --- |
+| `TRAJ = 1` | LIMO segue a lemniscata; Bebop mantém a formação a `1.5 m` acima do PoI. |
+| `TRAJ = 0` | LIMO converge para `[0; 0]`; Bebop converge para `[0; 0; 1] m`. |
+| `MODO_BEBOP = 'off'` | Não envia comandos ao Bebop; integra uma planta virtual para auditoria. |
+| `MODO_BEBOP = 'teste'` | Lê o Bebop e publica `cmd_vel`, sem decolagem. |
+| `MODO_BEBOP = 'voo'` | Decola, controla e pousa o Bebop. |
+
+### Sequência segura
+
+1. Rode `limoControl.m` para validar o LIMO sozinho.
+2. Rode `formacao_2.m` com `MODO_BEBOP = 'off'`.
+3. Analise a auditoria gerada.
+4. Valide o Bebop isoladamente e os sinais de comando em bancada.
+5. Use `MODO_BEBOP = 'teste'`.
+6. Faça o primeiro voo apenas em área livre, com parada de emergência disponível.
+
+## Auditoria e visualização
+
+Com `cfg.audit_enabled = true`, `formacao_2.m` registra arquivos `audit_formacao_*.txt`. No modo `off`, o arquivo representa a resposta da planta virtual:
+
+$$
+\dot{v} = f_1u - f_2v
+$$
+
+O log contém posição e alvo do Bebop, referência do LIMO, comandos, resíduos cinemáticos/dinâmicos, saturações e resumo de erro.
+
+Para gerar gráficos e uma animação a partir de um audit:
+
+```bash
+uv run python sim/visualizar_auditoria_formacao.py \
+  matlab/audit_formacao_YYYYMMDD_HHMMSS.txt --gif
 ```
 
-## Arquitetura de controle implementada
+Os arquivos são salvos em `matlab/audit_formacao_..._visualizacao/`:
 
-Estado da formação `q = [xf, yf, zf, ρ, α, β]`, com PoI no ponto de controle do LIMO:
+- `trajetoria_xy.png`;
+- `sinais_e_metricas.png`;
+- `reproducao.gif`, quando usado `--gif`.
 
-1. **Laço externo** — controlador cinemático da formação com saturação por tangente hiperbólica
-2. **Espaço nulo** — desvio de obstáculo (prioridade) com rastreamento da formação no espaço nulo
-3. **Jacobiano inverso** — mapeia velocidades da formação para comandos do LIMO e do Bebop
-4. **Laço interno** — compensador dinâmico do LIMO (regressão) e compensador simplificado do Bebop, com regulador de altitude
-5. **Integração** — método de Euler para atualizar as poses dos robôs
+O GIF é uma reprodução das amostras registradas no TXT. Ele não substitui a simulação em alta frequência nem a validação física do Bebop.
 
-## Testes
+## Critérios para leitura da auditoria
 
-rosshutdown
-rosinit('<http://192.168.0.100:11311>')
-rostopic('list') % deve aparecer /natnet_ros/L1/pose
-sub = rossubscriber('/natnet_ros/L1/pose', 'geometry_msgs/PoseStamped');
-pause(2)
-[msg, ~, ~] = receive(sub, 10) % deve retornar em poucos segundos
-msg.Pose.Position
+- Resíduos cinemático e dinâmico próximos de zero indicam consistência algébrica.
+- Erro RMS, máximo e final do Bebop avaliam o seguimento da formação.
+- Saturação recorrente indica que ganhos, referência ou limites exigem ajuste.
+- A distância mínima ao obstáculo deve permanecer acima do raio físico, com margem para incerteza de pose.
+
+## Limitações
+
+- A auditoria `off` é uma validação do modelo, não uma prova de desempenho no voo real.
+- Os parâmetros e o mapeamento de `cmd_vel` do Bebop devem ser confirmados experimentalmente antes de voo autônomo.
+- O obstáculo e os limites de velocidade devem ser revisados para o espaço físico do laboratório.
