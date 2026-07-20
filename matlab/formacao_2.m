@@ -38,10 +38,51 @@ alpha_f = 0;
 beta_f = pi / 2;
 Kp_B = diag([1.0, 1.0, 1.2]);
 Ls_B = diag([0.6, 0.6, 0.6]);
-KD_B = diag([4, 4, 4, 4]);
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% MODIFICAÇÃO: KD_B reduzido de diag([4,4,4,4]) para diag([2.5,2.5,2.0,2.5]).
+% Motivo: KD_B multiplica (vd_B - vB_meas), e vB_meas é obtido por diferença
+% finita bruta da pose do OptiTrack (ruidosa a 30 Hz). Com KD_B=4 esse ruído
+% era amplificado 2x mais do que no controlador que voou com sucesso
+% (formacion_limo_bebop_final.m usa Kd_B1=diag([2,2,1.8,5])), produzindo
+% comandos brutos (cmdB_raw) que saturavam com frequência.
+% Impacto esperado: menor amplificação de ruído de medição, comandos mais
+% suaves, ainda com damping suficiente para rastrear a formação.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+KD_B = diag([2.5, 2.5, 2.0, 2.5]);
 f1 = diag([0.8417, 0.8354, 3.966, 9.8524]);
 f2 = diag([0.18227, 0.17095, 4.001, 4.7295]);
-umax_B = 1.0;
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% MODIFICAÇÃO: substituição da saturação única umax_B=1.0 (aplicada igual
+% a vx, vy, vz e yaw) por limites por eixo, calibrados como no código que
+% voou com sucesso (vx,vy=0.5 m/s; vz=0.3 m/s; yaw=0.5 rad/s).
+% Motivo: cmd_vel do Bebop é interpretado pelo driver como fração do
+% ângulo/velocidade máxima por eixo. Permitir vz até 1.0 (mesmo limite do
+% eixo horizontal) é fisicamente desproporcional: o eixo vertical do Bebop
+% satura muito mais rápido e é o mais sensível a comandos agressivos perto
+% do solo/decolagem. Essa é a causa mais provável da queda.
+% Impacto esperado: elimina comandos verticais/horizontais desproporcionais
+% e replica o envelope de comando validado em voo real.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+cmdB_max = [0.5; 0.5; 0.3; 0.5];
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% MODIFICAÇÃO: nova saturação de nível 1 (velocidade desejada) e novos
+% parâmetros de soft start, filtro de derivada e rate limiter para o Bebop.
+% Motivo: requisitos de robustez (soft start, rate limiter, filtro de
+% dvd_B, anti-windup) pedidos explicitamente para evitar comandos
+% agressivos logo após o takeoff e evitar picos de derivada.
+% Impacto esperado: transições suaves de ganho, comandos que não saltam
+% instantaneamente e derivadas numéricas limitadas.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+vd_B_max = [0.5; 0.5; 0.3];        % Nível 1: limite da velocidade mundo desejada (m/s)
+cfg.soft_start_time_s = 8.0;       % tempo de rampa suave dos ganhos do Bebop
+cfg.soft_start_gamma_min = 0.3;    % ganho mínimo no início (evita autoridade nula)
+cfg.dvd_B_filter_alpha = 0.3;      % filtro passa-baixa (0<alpha<=1) para dvd_B
+cfg.dvd_B_max = [1.0; 1.0; 0.6; 1.0]; % limite de |dvd_B| (m/s^2, rad/s^2)
+cfg.cmdB_rate_max = [1.2; 1.2; 0.8; 1.2]; % taxa máxima de variação do comando (unid./s)
+cfg.bebop_limite_xy = 1.8;         % parede virtual horizontal [m]
+cfg.bebop_limite_z = 1.8;          % parede virtual vertical [m]
 
 MODO_BEBOP = 'teste'; % 'off', 'teste' ou 'voo'
 BTN_STOP = 1;
@@ -107,7 +148,7 @@ if strcmp(MODO_BEBOP, 'voo')
     pause(cfg.takeoff_wait_s);
 end
 
-[x1, y1, z1, psi1] = ler_pose(pose_L);
+[x1, y1, z1, psi1, ts1] = ler_pose(pose_L);
 if strcmp(MODO_BEBOP, 'off')
     virtual_B.p = [x1; y1; z1 + rho_f];
     virtual_B.psi = 0;
@@ -116,15 +157,47 @@ if strcmp(MODO_BEBOP, 'off')
     y2 = virtual_B.p(2);
     z2 = virtual_B.p(3);
     psi2 = virtual_B.psi;
+    ts2 = ts1;
 else
-    [x2, y2, z2, psi2] = ler_pose(pose_B);
+    [x2, y2, z2, psi2, ts2] = ler_pose(pose_B);
 end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% MODIFICAÇÃO: watchdog de OptiTrack (timeout de pose parada).
+% Motivo: ver comentário em ler_pose. Copiado do padrão usado em
+% formacion_limo_bebop_final.m (checagem de Header.Stamp + timeout de 0.5 s).
+% Motivo de funcionar: garante que vB_meas e dvd_B nunca sejam calculados a
+% partir de uma pose "congelada" ou de uma amostra atrasada, que produziria
+% uma falsa velocidade zero seguida de um salto quando a amostra nova
+% chegasse — exatamente o tipo de pico de derivada que o filtro dvd_B_filt
+% não consegue distinguir de um comando real.
+% Impacto esperado: para o experimento com segurança (comando nulo + pouso)
+% se o OptiTrack parar de atualizar por mais de 0.5 s.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+cfg.optitrack_timeout_s = 0.5;
+last_ts_L = ts1; last_update_L = tic;
+last_ts_B = ts2; last_update_B = tic;
 
 v_limo_state = [0; 0];
 vd_B_ant = [0; 0; 0; 0];
 poseB_ant = [x2; y2; z2];
 poseB_psi_ant = psi2;
 t_ant = 0;
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% MODIFICAÇÃO: novos estados para rate limiter e filtro de derivada do Bebop.
+% Motivo: cmdB_prev guarda o último comando REALMENTE ENVIADO (pós-saturação
+% e pós-rate-limit); ao usar esse valor como referência do limitador de taxa
+% no próximo ciclo (em vez do alvo não saturado), o próprio limitador se
+% torna anti-windup: nunca "recupera de um salto" que nunca foi de fato
+% comandado. dvd_B_filt guarda a derivada filtrada usada no lugar da
+% diferença finita bruta.
+% Impacto esperado: elimina picos de comando e evita acúmulo de erro apenas
+% teórico (windup) após saturação.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+cmdB_prev = zeros(4, 1);
+dvd_B_filt = zeros(4, 1);
+em_preparacao_ant = true;
 
 H.t = zeros(1, N);
 H.poi = zeros(2, N);
@@ -136,6 +209,14 @@ H.cmdL = zeros(2, N);
 H.cmdB = zeros(4, N);
 H.dobs = zeros(1, N);
 H.satB = false(1, N);
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% MODIFICAÇÃO: histórico adicional para diagnosticar soft start e rate limit.
+% Motivo: permite auditar em pós-processamento se o rate limiter e o soft
+% start estavam de fato atenuando os comandos durante o experimento.
+% Impacto esperado: nenhum no controle; apenas instrumentação.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+H.gamma = zeros(1, N);
+H.satRate = false(1, N);
 
 if use_preparation
     fprintf(['Preparando o Bebop por %.1f s com LIMO parado. ', ...
@@ -161,14 +242,30 @@ try
             break;
         end
 
-        [x1, y1, z1, psi1] = ler_pose(pose_L);
+        [x1, y1, z1, psi1, ts1] = ler_pose(pose_L);
         if strcmp(MODO_BEBOP, 'off')
             x2 = virtual_B.p(1);
             y2 = virtual_B.p(2);
             z2 = virtual_B.p(3);
             psi2 = virtual_B.psi;
+            ts2 = ts1;
         else
-            [x2, y2, z2, psi2] = ler_pose(pose_B);
+            [x2, y2, z2, psi2, ts2] = ler_pose(pose_B);
+        end
+
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        % MODIFICAÇÃO: verificação do watchdog de OptiTrack (ver ler_pose).
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        if ts1 > last_ts_L
+            last_ts_L = ts1; last_update_L = tic;
+        end
+        if ts2 > last_ts_B
+            last_ts_B = ts2; last_update_B = tic;
+        end
+        if toc(last_update_L) > cfg.optitrack_timeout_s || ...
+                (~strcmp(MODO_BEBOP, 'off') && toc(last_update_B) > cfg.optitrack_timeout_s)
+            fprintf('OptiTrack perdido por mais de %.1f s. Abortando.\n', cfg.optitrack_timeout_s);
+            break;
         end
 
         poi = [x1 + cfg.a1 * cos(psi1); y1 + cfg.a1 * sin(psi1)];
@@ -196,12 +293,62 @@ try
                    z1 + rho_f * sin(beta_f)];
         end
         p2 = [x2; y2; z2];
+
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        % MODIFICAÇÃO: parede virtual (geofencing) para o Bebop.
+        % Motivo: formacao_2.m não tinha nenhum limite espacial de segurança
+        % para o Bebop; formacion_limo_bebop_final.m (que voou com sucesso)
+        % aborta e aterrissa se o Bebop sai de uma caixa [-1.8,1.8] m em xy
+        % e z<1.8 m. Copiado porque é uma rede de segurança independente do
+        % controlador — protege mesmo se o controlador calcular um comando
+        % ruim por qualquer motivo.
+        % Impacto esperado: nenhum em operação normal; interrompe o
+        % experimento com segurança em caso de comportamento anômalo.
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        if ~strcmp(MODO_BEBOP, 'off') && ...
+                (abs(p2(1)) > cfg.bebop_limite_xy || abs(p2(2)) > cfg.bebop_limite_xy || ...
+                 p2(3) > cfg.bebop_limite_z)
+            fprintf('PAREDE VIRTUAL: Bebop fora dos limites (%.2f,%.2f,%.2f). Abortando.\n', ...
+                p2(1), p2(2), p2(3));
+            break;
+        end
+
         vel_poi_world = [cos(psi1), -cfg.a1 * sin(psi1);
                          sin(psi1),  cfg.a1 * cos(psi1)] * cmdL;
         if TRAJ == 0
             vel_poi_world = [0; 0];
         end
-        dx2 = [vel_poi_world; 0] + Ls_B * tanh(Ls_B \ (Kp_B * (p2d - p2)));
+
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        % MODIFICAÇÃO: soft start dos ganhos do Bebop (Kp_B, KD_B).
+        % Motivo: pedido explícito de robustez — os ganhos devem crescer
+        % suavemente em vez de aplicar o ganho total desde o primeiro ciclo
+        % após o takeoff/hover, quando o erro de formação inicial (posição
+        % de decolagem do Bebop vs. p2d) pode ser grande.
+        % Impacto esperado: evita um transiente agressivo de comando logo
+        % após a fase de takeoff/hover, sem alterar o ganho em regime
+        % permanente (gamma satura em 1 após soft_start_time_s).
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        gamma = min(max(t / cfg.soft_start_time_s, cfg.soft_start_gamma_min), 1);
+        Kp_B_eff = gamma * Kp_B;
+        KD_B_eff = gamma * KD_B;
+
+        dx2 = [vel_poi_world; 0] + Ls_B * tanh(Ls_B \ (Kp_B_eff * (p2d - p2)));
+
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        % MODIFICAÇÃO: saturação de nível 1 (velocidade mundo desejada dx2)
+        % antes de passar para o corpo e para o compensador dinâmico.
+        % Motivo: requisito explícito de saturação em dois níveis. O tanh
+        % já limita a parcela de erro de posição, mas não limita a soma com
+        % o feedforward vel_poi_world; saturar dx2 garante um teto explícito
+        % e documentado por eixo antes de qualquer outro cálculo.
+        % Impacto esperado: vd_B nunca pede, por construção, mais que
+        % vd_B_max, reduzindo a chance de o nível 2 (comando final) saturar
+        % com folga insuficiente para a ação de derivada/damping.
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        dx2 = [saturar(dx2(1), vd_B_max(1));
+               saturar(dx2(2), vd_B_max(2));
+               saturar(dx2(3), vd_B_max(3))];
 
         A2inv = [cos(psi2), sin(psi2), 0;
                  -sin(psi2), cos(psi2), 0;
@@ -214,20 +361,63 @@ try
             vB_meas = [A2inv * velWB; psidot2];
         end
         vd_B = [A2inv * dx2; 0];
-        if k == 1
-            dvd_B = zeros(4, 1);
+
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        % MODIFICAÇÃO: reset da derivada na transição preparação -> formação
+        % e filtro passa-baixa + saturação de dvd_B.
+        % Motivo: p2d muda de fórmula entre a fase de preparação e a fase
+        % ativa (linhas ~189-197), o que pode gerar um salto instantâneo em
+        % vd_B nesse instante; diferenciar esse salto por diferença finita
+        % bruta produz um pico de "aceleração" explosivo — exatamente o tipo
+        % de evento citado no diagnóstico (docs/diagnostico_formacao_2_queda_bebop.md)
+        % como gatilho de saturação e queda. O filtro passa-baixa (alpha) e o
+        % limite cfg.dvd_B_max atenuam ruído residual da diferenciação da
+        % pose do OptiTrack em qualquer outro instante.
+        % Impacto esperado: elimina o pico de derivada na troca de fase e
+        % limita picos de derivada numérica em regime normal.
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        transicao_prep_formacao = em_preparacao_ant && ~em_preparacao;
+        if k == 1 || transicao_prep_formacao
+            dvd_B_raw = zeros(4, 1);
+            dvd_B_filt = zeros(4, 1);
         else
-            dvd_B = (vd_B - vd_B_ant) / dt;
+            dvd_B_raw = (vd_B - vd_B_ant) / dt;
+            dvd_B_filt = (1 - cfg.dvd_B_filter_alpha) * dvd_B_filt + ...
+                cfg.dvd_B_filter_alpha * dvd_B_raw;
         end
-        cmdB_raw = f1 \ (dvd_B + KD_B * (vd_B - vB_meas) + f2 * vB_meas);
-        cmdB = saturar(cmdB_raw, umax_B);
+        dvd_B_filt = max(min(dvd_B_filt, cfg.dvd_B_max), -cfg.dvd_B_max);
+        dvd_B = dvd_B_filt;
+
+        cmdB_raw = f1 \ (dvd_B + KD_B_eff * (vd_B - vB_meas) + f2 * vB_meas);
+
+        % Nível 2: saturação do comando final por eixo (ver MODIFICAÇÃO acima, cmdB_max).
+        cmdB_satN2 = max(min(cmdB_raw, cmdB_max), -cmdB_max);
+
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        % MODIFICAÇÃO: rate limiter (limitador de taxa de variação) do
+        % comando enviado ao Bebop, com anti-windup implícito.
+        % Motivo: requisito explícito — nenhum comando pode variar
+        % instantaneamente. O limite é aplicado sobre cmdB_prev, que é o
+        % último comando REALMENTE ENVIADO (já saturado e já rate-limited no
+        % ciclo anterior), não sobre o alvo bruto cmdB_raw. Isso é o próprio
+        % mecanismo de anti-windup pedido: o limitador nunca tenta
+        % "recuperar" um salto que na prática nunca foi comandado.
+        % Impacto esperado: comandos variam de forma suave mesmo quando o
+        % cálculo instantâneo pede uma mudança grande (ex.: pico de ruído,
+        % início da formação, desvio de obstáculo).
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        delta_max = cfg.cmdB_rate_max * dt;
+        delta_cmd = cmdB_satN2 - cmdB_prev;
+        delta_cmd = max(min(delta_cmd, delta_max), -delta_max);
+        cmdB = cmdB_prev + delta_cmd;
+        satB_rate = any(abs(cmdB - cmdB_satN2) > 1e-9);
 
         audit_step = max(1, round(cfg.audit_period / cfg.T));
         if audit_fid >= 0 && (k == 1 || mod(k - 1, audit_step) == 0)
             registrar_auditoria(audit_fid, t, t_traj, em_preparacao, dt, MODO_BEBOP, ...
                 TRAJ, poi, ref_xy, psi1, ...
                 p2, p2d, psi2, A2inv, dx2, vB_meas, vd_B, dvd_B, ...
-                cmdB_raw, cmdB, f1, f2, KD_B);
+                cmdB_raw, cmdB, f1, f2, KD_B_eff);
         end
 
         msg_L.Linear.X = cmdL(1);
@@ -256,11 +446,15 @@ try
         H.cmdB(:, k) = cmdB;
         H.dobs(k) = norm(poi - cfg.obstacle_center);
         H.satB(k) = any(abs(cmdB_raw - cmdB) > 1e-9);
+        H.gamma(k) = gamma;
+        H.satRate(k) = satB_rate;
         kf = k;
         poseB_ant = p2;
         poseB_psi_ant = psi2;
         vd_B_ant = vd_B;
         t_ant = t;
+        cmdB_prev = cmdB;
+        em_preparacao_ant = em_preparacao;
 
         if mod(k, 30) == 0
             if em_preparacao
@@ -325,7 +519,7 @@ if kf > 1
     legend('Location', 'bestoutside');
 end
 
-function [x, y, z, psi] = ler_pose(sub)
+function [x, y, z, psi, tstamp] = ler_pose(sub)
     p = sub.LatestMessage;
     quat = [p.Pose.Orientation.W, p.Pose.Orientation.X, ...
             p.Pose.Orientation.Y, p.Pose.Orientation.Z];
@@ -334,6 +528,19 @@ function [x, y, z, psi] = ler_pose(sub)
     y = p.Pose.Position.Y;
     z = p.Pose.Position.Z;
     psi = eul(1);
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % MODIFICAÇÃO: ler_pose agora também retorna o timestamp do header.
+    % Motivo: docs/diagnostico_formacao_2_queda_bebop.md (item 3) aponta que
+    % o código lia apenas LatestMessage sem checar se a amostra era nova,
+    % permitindo que uma pose repetida/atrasada do OptiTrack alimentasse
+    % vB_meas e dvd_B com ruído/degraus espúrios, amplificados pelo
+    % compensador dinâmico (KD_B, f1\...). O código que voou com sucesso
+    % (formacion_limo_bebop_final.m) só atualiza pose e aciona emergência
+    % se o timestamp ficar parado por mais de 0.5 s.
+    % Impacto esperado: permite implementar o watchdog de OptiTrack no laço
+    % principal sem alterar a lógica de controle em si.
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    tstamp = double(p.Header.Stamp.Sec) + double(p.Header.Stamp.Nsec) * 1e-9;
 end
 
 function [ref_xy, ref_xy_dot] = lemniscata_reference(t)
