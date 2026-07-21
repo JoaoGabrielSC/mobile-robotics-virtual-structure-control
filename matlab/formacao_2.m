@@ -7,6 +7,27 @@ cfg.T = 1 / 30;
 cfg.Tsim = 120;
 cfg.takeoff_wait_s = 5;
 cfg.preparation_time_s = 10;
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% MODIFICAÇÃO: decolagem automática vira opcional e independente da fase de
+% preparação.
+% Motivo: decisão de seguir a mesma prática do formacion_limo_bebop_final.m
+% (grupo externo que voou com sucesso) — decolagem manual pelo piloto, fora
+% do controle do script; o script só assume o controle depois que o
+% operador confirma pelo joystick que o Bebop já está em hover estável.
+% Antes, a fase de preparação (LIMO parado + soft start do Bebop até p2d)
+% só rodava quando MODO_BEBOP=='voo', o mesmo modo que fazia o takeoff
+% automático — não havia como ter decolagem manual COM a convergência
+% suave de posição antes da formação ativa (ver uso de use_preparation
+% mais abaixo).
+% Impacto esperado: cfg.auto_takeoff passa a controlar só a chamada do
+% serviço de takeoff. Com cfg.auto_takeoff=true o comportamento antigo é
+% preservado integralmente (takeoff automático + pause fixo). Com
+% cfg.auto_takeoff=false (novo padrão), o script espera confirmação do
+% piloto pelo joystick antes de prosseguir.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+cfg.auto_takeoff = false;          % false: decolagem manual pelo piloto (igual ao grupo externo)
+cfg.wait_for_start_signal = true;  % true: aguarda confirmação do joystick antes da preparação
+cfg.btn_start = 2;                 % botão do joystick que confirma "Bebop já no ar e estável"
 cfg.v_max = 0.30;
 cfg.w_max = 1.20;
 cfg.a1 = 0.10;
@@ -84,9 +105,19 @@ cfg.cmdB_rate_max = [1.2; 1.2; 0.8; 1.2]; % taxa máxima de variação do comand
 cfg.bebop_limite_xy = 1.8;         % parede virtual horizontal [m]
 cfg.bebop_limite_z = 1.8;          % parede virtual vertical [m]
 
-MODO_BEBOP = 'teste'; % 'off', 'teste' ou 'voo'
+MODO_BEBOP = 'teste'; % 'off', 'teste' ou 'voo' — decolagem automática agora é cfg.auto_takeoff (ver acima)
 BTN_STOP = 1;
-use_preparation = strcmp(MODO_BEBOP, 'voo') && cfg.preparation_time_s > 0;
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% MODIFICAÇÃO: fase de preparação desacoplada do takeoff automático.
+% Motivo: ver comentário de cfg.auto_takeoff acima. A preparação deve rodar
+% sempre que o Bebop real estiver sendo comandado (MODO_BEBOP ~= 'off'),
+% não só quando o próprio script executou o takeoff.
+% Impacto esperado: MODO_BEBOP='teste' com decolagem manual agora também
+% passa pela preparação (LIMO parado + soft start do Bebop até p2d) antes
+% de iniciar a lemniscata/formação — elimina o problema de a formação
+% ativa começar em t=0 sem convergência suave nesse modo.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+use_preparation = ~strcmp(MODO_BEBOP, 'off') && cfg.preparation_time_s > 0;
 preparation_time_s = use_preparation * cfg.preparation_time_s;
 N = round((cfg.Tsim + preparation_time_s) / cfg.T);
 
@@ -105,8 +136,10 @@ if cfg.audit_enabled
     fprintf(audit_fid, 'Início: %s\n', datestr(now, 'yyyy-mm-dd HH:MM:SS'));
     fprintf(audit_fid, 'Modo Bebop: %s\n', MODO_BEBOP);
     fprintf(audit_fid, 'Trajetória: %d\n', TRAJ);
-    fprintf(audit_fid, 'Espera após takeoff: %.1f s\n', ...
-        strcmp(MODO_BEBOP, 'voo') * cfg.takeoff_wait_s);
+    % MODIFICAÇÃO: registro agora reflete cfg.auto_takeoff em vez de MODO_BEBOP=='voo'
+    % (ver MODIFICAÇÃO de cfg.auto_takeoff acima).
+    fprintf(audit_fid, 'Decolagem automática: %d | Espera após takeoff: %.1f s\n', ...
+        cfg.auto_takeoff, cfg.auto_takeoff * cfg.takeoff_wait_s);
     fprintf(audit_fid, 'Preparação antes da trajetória: %.1f s\n', ...
         preparation_time_s);
     fprintf(audit_fid, 'Amostragem de auditoria: %.2f s\n', cfg.audit_period);
@@ -141,11 +174,39 @@ if ~strcmp(MODO_BEBOP, 'off')
     receive(pose_B, 10);
 end
 
-if strcmp(MODO_BEBOP, 'voo')
-    send(pub_TO, msg_TO);
-    fprintf('Takeoff enviado. Aguardando %.1f s para estabilização inicial.\n', ...
-        cfg.takeoff_wait_s);
-    pause(cfg.takeoff_wait_s);
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% MODIFICAÇÃO: decolagem automática opcional + confirmação manual do piloto.
+% Motivo: replica a prática do formacion_limo_bebop_final.m (linhas de
+% send(pub_tkf,...) e pause(5) comentadas no script do outro grupo —
+% decolagem feita manualmente antes de acionar o botão que entrega o
+% controle ao script). O tempo de estabilização de uma decolagem manual
+% varia com o piloto, então um botão de confirmação é mais seguro que um
+% pause() de duração fixa.
+% Impacto esperado: com cfg.auto_takeoff=false (padrão), nenhum comando é
+% enviado ao Bebop até o piloto confirmar pelo joystick que o hover está
+% estável; com cfg.auto_takeoff=true, preserva o comportamento antigo
+% (takeoff automático + pause fixo) sem alteração.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+if ~strcmp(MODO_BEBOP, 'off')
+    if cfg.auto_takeoff
+        send(pub_TO, msg_TO);
+        fprintf('Takeoff enviado. Aguardando %.1f s para estabilização inicial.\n', ...
+            cfg.takeoff_wait_s);
+        pause(cfg.takeoff_wait_s);
+    elseif cfg.wait_for_start_signal
+        fprintf(['Decolagem manual: decole o Bebop e estabilize o hover.\n', ...
+            'Pressione o botão %d do joystick para iniciar a preparação, ', ...
+            'ou o botão %d para cancelar.\n'], cfg.btn_start, BTN_STOP);
+        prosseguir = aguardar_sinal_inicio(J, cfg.btn_start, BTN_STOP);
+        if ~prosseguir
+            fprintf('Início cancelado pelo joystick antes da decolagem.\n');
+            if audit_fid >= 0
+                fclose(audit_fid);
+            end
+            rosshutdown;
+            return;
+        end
+    end
 end
 
 [x1, y1, z1, psi1, ts1] = ler_pose(pose_L);
@@ -483,7 +544,18 @@ if ~strcmp(MODO_BEBOP, 'off')
     msg_B.Angular.Z = 0;
     send(pub_B, msg_B);
 end
-if strcmp(MODO_BEBOP, 'voo')
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% MODIFICAÇÃO: pouso automático ao final passa a depender de "está enviando
+% cmd_vel real ao Bebop" (MODO_BEBOP ~= 'off'), não mais de "o script fez o
+% takeoff" (MODO_BEBOP=='voo').
+% Motivo: com decolagem manual (cfg.auto_takeoff=false), o script ainda é
+% responsável por pousar o Bebop com segurança ao final do experimento ou
+% em caso de aborto — do contrário, um Bebop decolado manualmente em
+% MODO_BEBOP='teste' ficaria pairando sem pouso automático.
+% Impacto esperado: nenhuma mudança quando MODO_BEBOP=='voo'; em
+% MODO_BEBOP='teste' com Bebop real, o script agora também envia land().
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+if ~strcmp(MODO_BEBOP, 'off')
     send(pub_LD, msg_LD);
 end
 pause(0.5);
@@ -517,6 +589,23 @@ if kf > 1
     desenhar_circulo(cfg.obstacle_center(1), cfg.obstacle_center(2), cfg.obstacle_influence_radius, 'k:');
     xlabel('x [m]'); ylabel('y [m]');
     legend('Location', 'bestoutside');
+end
+
+function prosseguir = aguardar_sinal_inicio(J, btn_start, btn_stop)
+    % Ver MODIFICAÇÃO de decolagem manual (bloco "Decolagem manual" acima).
+    % Bloqueia até o piloto confirmar (botao_start) ou cancelar (botao_stop).
+    prosseguir = true;
+    while true
+        btns = button(J);
+        if numel(btns) >= btn_stop && btns(btn_stop)
+            prosseguir = false;
+            return;
+        end
+        if numel(btns) >= btn_start && btns(btn_start)
+            return;
+        end
+        pause(0.05);
+    end
 end
 
 function [x, y, z, psi, tstamp] = ler_pose(sub)
