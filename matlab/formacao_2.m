@@ -35,7 +35,7 @@ cfg.audit_dir = fullfile('results', 'formacao_2');
 TRAJ = 1; % 0: LIMO para em [0;0] e Bebop em [0;0;1], 1: lemniscata
 rho_f = 1.5;
 alpha_f = 0;
-beta_f = pi / 2;
+beta_f = pi / 3;   % 60 graus (era pi/2 na especificação original)
 Kp_B = diag([1.0, 1.0, 1.2]);
 Ls_B = diag([0.6, 0.6, 0.6]);
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
