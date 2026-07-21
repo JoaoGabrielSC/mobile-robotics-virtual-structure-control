@@ -24,11 +24,11 @@ cfg.obstacle_center = [-0.20; 0.425];
 cfg.obstacle_radius = 0.15;
 cfg.obstacle_influence_radius = 0.50; % exigido pelo SPEC (era 0.25)
 cfg.use_obstacle_avoidance = true;
-cfg.obstacle_potential_gain = 0.80;
+cfg.obstacle_potential_gain = 0.50;
 cfg.obstacle_potential_exponent = 4;
-cfg.obstacle_potential_shape_a = [];
-cfg.obstacle_potential_shape_b = [];
-cfg.obstacle_potential_vmax = 0.80;
+cfg.obstacle_potential_shape_a = 0.12; % fixo: zona de repulsão forte não escala com influence_radius
+cfg.obstacle_potential_shape_b = 0.12;
+cfg.obstacle_potential_vmax = 0.25;    % <= cfg.v_max, senão o LIMO nunca "vence" a repulsão
 cfg.crossing_center = [0.0; 0.0];
 cfg.crossing_zone_radius = 0.01;
 cfg.crossing_feedback_min = 0.20;
@@ -447,7 +447,10 @@ end
 
 function q_dot_safe = cluster_obstacle_nsb(q_dot_formation, poi_xy, cfg)
     % NSB (Eq. 5.13): evasão com prioridade máxima, formação projetada no
-    % espaço nulo da tarefa de evasão.
+    % espaço nulo da tarefa de evasão. J1 é a Jacobiana da tarefa ESCALAR
+    % (direção do gradiente repulsivo), não um seletor de xf,yf — assim o
+    % espaço nulo remove só a componente radial e preserva a tangencial,
+    % permitindo contornar o obstáculo em vez de zerar toda a formação.
     offset = poi_xy - cfg.obstacle_center;
     distance = norm(offset);
     q_dot_safe = q_dot_formation;
@@ -455,10 +458,15 @@ function q_dot_safe = cluster_obstacle_nsb(q_dot_formation, poi_xy, cfg)
         return;
     end
     grad = obstacle_repulsive_gradient(offset, cfg);
-    J1 = [eye(2), zeros(2, 4)];
+    grad_mag = norm(grad);
+    if grad_mag <= 1e-9
+        return;
+    end
+    task_dir = grad / grad_mag;
+    J1 = [task_dir.', 0, 0, 0, 0];
     J1_pinv = J1.';
     null_proj = eye(6) - J1_pinv * J1;
-    q_dot_safe = J1_pinv * grad + null_proj * q_dot_formation;
+    q_dot_safe = J1_pinv * grad_mag + null_proj * q_dot_formation;
 end
 
 function grad = obstacle_repulsive_gradient(offset, cfg)
