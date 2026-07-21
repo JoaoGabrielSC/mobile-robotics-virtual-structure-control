@@ -1,5 +1,7 @@
-% Formação LIMO-Bebop usando o mesmo controle do LIMO de limoControl.m.
-% O LIMO rastreia a lemniscata pelo PoI; o Bebop mantém a formação cartesiana.
+% Formação LIMO-Bebop em espaço de cluster (Estrutura Virtual, Cap. 5 Sarcinelli).
+% Convenção deste projeto: beta = elevação, alpha = azimute (trocada em
+% relação à Eq. 5.5b do livro, mantida por compatibilidade com o restante
+% do código já validado em voo). Ver decisão registrada na auditoria.
 clear; clc; close all;
 
 %% Configuração
@@ -7,27 +9,9 @@ cfg.T = 1 / 30;
 cfg.Tsim = 120;
 cfg.takeoff_wait_s = 5;
 cfg.preparation_time_s = 10;
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% MODIFICAÇÃO: decolagem automática vira opcional e independente da fase de
-% preparação.
-% Motivo: decisão de seguir a mesma prática do formacion_limo_bebop_final.m
-% (grupo externo que voou com sucesso) — decolagem manual pelo piloto, fora
-% do controle do script; o script só assume o controle depois que o
-% operador confirma pelo joystick que o Bebop já está em hover estável.
-% Antes, a fase de preparação (LIMO parado + soft start do Bebop até p2d)
-% só rodava quando MODO_BEBOP=='voo', o mesmo modo que fazia o takeoff
-% automático — não havia como ter decolagem manual COM a convergência
-% suave de posição antes da formação ativa (ver uso de use_preparation
-% mais abaixo).
-% Impacto esperado: cfg.auto_takeoff passa a controlar só a chamada do
-% serviço de takeoff. Com cfg.auto_takeoff=true o comportamento antigo é
-% preservado integralmente (takeoff automático + pause fixo). Com
-% cfg.auto_takeoff=false (novo padrão), o script espera confirmação do
-% piloto pelo joystick antes de prosseguir.
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-cfg.auto_takeoff = false;          % false: decolagem manual pelo piloto (igual ao grupo externo)
-cfg.wait_for_start_signal = true;  % true: aguarda confirmação do joystick antes da preparação
-cfg.btn_start = 2;                 % botão do joystick que confirma "Bebop já no ar e estável"
+cfg.auto_takeoff = false;          % false: decolagem manual, confirmada por joystick
+cfg.wait_for_start_signal = true;
+cfg.btn_start = 2;
 cfg.v_max = 0.30;
 cfg.w_max = 1.20;
 cfg.a1 = 0.10;
@@ -38,7 +22,7 @@ cfg.kd_limo = 4.0;
 
 cfg.obstacle_center = [-0.20; 0.425];
 cfg.obstacle_radius = 0.15;
-cfg.obstacle_influence_radius = 0.25;
+cfg.obstacle_influence_radius = 0.50; % exigido pelo SPEC (era 0.25)
 cfg.use_obstacle_avoidance = true;
 cfg.obstacle_potential_gain = 0.80;
 cfg.obstacle_potential_exponent = 4;
@@ -53,70 +37,40 @@ cfg.audit_enabled = true;
 cfg.audit_period = 1.0;
 cfg.audit_dir = fullfile('results', 'formacao_2');
 
-TRAJ = 1; % 0: LIMO para em [0;0] e Bebop em [0;0;1], 1: lemniscata
+TRAJ = 1; % 0: cluster para na origem (teste), 1: lemniscata
 rho_f = 1.5;
 alpha_f = 0;
-beta_f = pi / 3;   % 60 graus (era pi/2 na especificação original)
+beta_f = pi / 3; % 60°, singularidade em beta=90° (drone exatamente acima)
+
+% Ganhos da lei cinemática do cluster (Eq. 5.7), shape = [rho; alpha; beta]
+K_shape_diag = [1.2; 1.0; 1.2];
+L_shape_diag = [0.3; 0.4; 0.4];
+
+% Ganhos usados só na fase de preparação (Bebop convergindo até p2d)
 Kp_B = diag([1.0, 1.0, 1.2]);
 Ls_B = diag([0.6, 0.6, 0.6]);
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% MODIFICAÇÃO: KD_B reduzido de diag([4,4,4,4]) para diag([2.5,2.5,2.0,2.5]).
-% Motivo: KD_B multiplica (vd_B - vB_meas), e vB_meas é obtido por diferença
-% finita bruta da pose do OptiTrack (ruidosa a 30 Hz). Com KD_B=4 esse ruído
-% era amplificado 2x mais do que no controlador que voou com sucesso
-% (formacion_limo_bebop_final.m usa Kd_B1=diag([2,2,1.8,5])), produzindo
-% comandos brutos (cmdB_raw) que saturavam com frequência.
-% Impacto esperado: menor amplificação de ruído de medição, comandos mais
-% suaves, ainda com damping suficiente para rastrear a formação.
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% KD_B reduzido de diag(4,4,4,4): amplificava ruído de vB_meas (diferença
+% finita bruta da pose) e saturava com frequência.
 KD_B = diag([2.5, 2.5, 2.0, 2.5]);
 f1 = diag([0.8417, 0.8354, 3.966, 9.8524]);
 f2 = diag([0.18227, 0.17095, 4.001, 4.7295]);
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% MODIFICAÇÃO: substituição da saturação única umax_B=1.0 (aplicada igual
-% a vx, vy, vz e yaw) por limites por eixo, calibrados como no código que
-% voou com sucesso (vx,vy=0.5 m/s; vz=0.3 m/s; yaw=0.5 rad/s).
-% Motivo: cmd_vel do Bebop é interpretado pelo driver como fração do
-% ângulo/velocidade máxima por eixo. Permitir vz até 1.0 (mesmo limite do
-% eixo horizontal) é fisicamente desproporcional: o eixo vertical do Bebop
-% satura muito mais rápido e é o mais sensível a comandos agressivos perto
-% do solo/decolagem. Essa é a causa mais provável da queda.
-% Impacto esperado: elimina comandos verticais/horizontais desproporcionais
-% e replica o envelope de comando validado em voo real.
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-cmdB_max = [0.5; 0.5; 0.3; 0.5];
+% Saturações do Bebop calibradas por eixo (driver interpreta cmd_vel como
+% fração da vel./ângulo máximo por eixo; vz satura mais rápido que xy).
+cmdB_max = [0.5; 0.5; 0.3; 0.5];      % nível 2: comando final
+vd_B_max = [0.5; 0.5; 0.3];           % nível 1: velocidade mundo desejada
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% MODIFICAÇÃO: nova saturação de nível 1 (velocidade desejada) e novos
-% parâmetros de soft start, filtro de derivada e rate limiter para o Bebop.
-% Motivo: requisitos de robustez (soft start, rate limiter, filtro de
-% dvd_B, anti-windup) pedidos explicitamente para evitar comandos
-% agressivos logo após o takeoff e evitar picos de derivada.
-% Impacto esperado: transições suaves de ganho, comandos que não saltam
-% instantaneamente e derivadas numéricas limitadas.
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-vd_B_max = [0.5; 0.5; 0.3];        % Nível 1: limite da velocidade mundo desejada (m/s)
-cfg.soft_start_time_s = 8.0;       % tempo de rampa suave dos ganhos do Bebop
-cfg.soft_start_gamma_min = 0.3;    % ganho mínimo no início (evita autoridade nula)
-cfg.dvd_B_filter_alpha = 0.3;      % filtro passa-baixa (0<alpha<=1) para dvd_B
-cfg.dvd_B_max = [1.0; 1.0; 0.6; 1.0]; % limite de |dvd_B| (m/s^2, rad/s^2)
-cfg.cmdB_rate_max = [1.2; 1.2; 0.8; 1.2]; % taxa máxima de variação do comando (unid./s)
-cfg.bebop_limite_xy = 1.8;         % parede virtual horizontal [m]
-cfg.bebop_limite_z = 1.8;          % parede virtual vertical [m]
+cfg.soft_start_time_s = 8.0;
+cfg.soft_start_gamma_min = 0.3;
+cfg.dvd_B_filter_alpha = 0.3;
+cfg.dvd_B_max = [1.0; 1.0; 0.6; 1.0];
+cfg.cmdB_rate_max = [1.2; 1.2; 0.8; 1.2];
+cfg.bebop_limite_xy = 1.8;
+cfg.bebop_limite_z = 1.8;
 
-MODO_BEBOP = 'teste'; % 'off', 'teste' ou 'voo' — decolagem automática agora é cfg.auto_takeoff (ver acima)
+MODO_BEBOP = 'teste'; % 'off', 'teste' ou 'voo'
 BTN_STOP = 1;
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% MODIFICAÇÃO: fase de preparação desacoplada do takeoff automático.
-% Motivo: ver comentário de cfg.auto_takeoff acima. A preparação deve rodar
-% sempre que o Bebop real estiver sendo comandado (MODO_BEBOP ~= 'off'),
-% não só quando o próprio script executou o takeoff.
-% Impacto esperado: MODO_BEBOP='teste' com decolagem manual agora também
-% passa pela preparação (LIMO parado + soft start do Bebop até p2d) antes
-% de iniciar a lemniscata/formação — elimina o problema de a formação
-% ativa começar em t=0 sem convergência suave nesse modo.
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 use_preparation = ~strcmp(MODO_BEBOP, 'off') && cfg.preparation_time_s > 0;
 preparation_time_s = use_preparation * cfg.preparation_time_s;
 N = round((cfg.Tsim + preparation_time_s) / cfg.T);
@@ -132,20 +86,15 @@ if cfg.audit_enabled
     if audit_fid < 0
         error('Não foi possível criar o arquivo de auditoria: %s', audit_file);
     end
-    fprintf(audit_fid, '=== AUDITORIA DE FORMAÇÃO LIMO-BEBOP ===\n');
+    fprintf(audit_fid, '=== AUDITORIA DE FORMAÇÃO LIMO-BEBOP (espaço de cluster) ===\n');
     fprintf(audit_fid, 'Início: %s\n', datestr(now, 'yyyy-mm-dd HH:MM:SS'));
-    fprintf(audit_fid, 'Modo Bebop: %s\n', MODO_BEBOP);
-    fprintf(audit_fid, 'Trajetória: %d\n', TRAJ);
-    % MODIFICAÇÃO: registro agora reflete cfg.auto_takeoff em vez de MODO_BEBOP=='voo'
-    % (ver MODIFICAÇÃO de cfg.auto_takeoff acima).
+    fprintf(audit_fid, 'Modo Bebop: %s | Trajetória: %d\n', MODO_BEBOP, TRAJ);
     fprintf(audit_fid, 'Decolagem automática: %d | Espera após takeoff: %.1f s\n', ...
         cfg.auto_takeoff, cfg.auto_takeoff * cfg.takeoff_wait_s);
-    fprintf(audit_fid, 'Preparação antes da trajetória: %.1f s\n', ...
-        preparation_time_s);
+    fprintf(audit_fid, 'Preparação antes da trajetória: %.1f s\n', preparation_time_s);
     fprintf(audit_fid, 'Amostragem de auditoria: %.2f s\n', cfg.audit_period);
     if strcmp(MODO_BEBOP, 'off')
-        fprintf(audit_fid, ['AVISO: Bebop desligado. A pose é gerada por uma planta virtual ', ...
-            'com v_dot=f1*u-f2*v; os comandos calculados não são enviados.\n']);
+        fprintf(audit_fid, 'AVISO: Bebop desligado; planta virtual v_dot=f1*u-f2*v.\n');
     end
     fprintf(audit_fid, '\n');
     fprintf('Auditoria da formação: %s\n', audit_file);
@@ -174,35 +123,20 @@ if ~strcmp(MODO_BEBOP, 'off')
     receive(pose_B, 10);
 end
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% MODIFICAÇÃO: decolagem automática opcional + confirmação manual do piloto.
-% Motivo: replica a prática do formacion_limo_bebop_final.m (linhas de
-% send(pub_tkf,...) e pause(5) comentadas no script do outro grupo —
-% decolagem feita manualmente antes de acionar o botão que entrega o
-% controle ao script). O tempo de estabilização de uma decolagem manual
-% varia com o piloto, então um botão de confirmação é mais seguro que um
-% pause() de duração fixa.
-% Impacto esperado: com cfg.auto_takeoff=false (padrão), nenhum comando é
-% enviado ao Bebop até o piloto confirmar pelo joystick que o hover está
-% estável; com cfg.auto_takeoff=true, preserva o comportamento antigo
-% (takeoff automático + pause fixo) sem alteração.
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Decolagem: automática (cfg.auto_takeoff) ou manual com confirmação por
+% joystick — decolagem manual replica o grupo externo que voou com sucesso.
 if ~strcmp(MODO_BEBOP, 'off')
     if cfg.auto_takeoff
         send(pub_TO, msg_TO);
-        fprintf('Takeoff enviado. Aguardando %.1f s para estabilização inicial.\n', ...
-            cfg.takeoff_wait_s);
+        fprintf('Takeoff enviado. Aguardando %.1f s.\n', cfg.takeoff_wait_s);
         pause(cfg.takeoff_wait_s);
     elseif cfg.wait_for_start_signal
         fprintf(['Decolagem manual: decole o Bebop e estabilize o hover.\n', ...
-            'Pressione o botão %d do joystick para iniciar a preparação, ', ...
-            'ou o botão %d para cancelar.\n'], cfg.btn_start, BTN_STOP);
+            'Botão %d confirma início, botão %d cancela.\n'], cfg.btn_start, BTN_STOP);
         prosseguir = aguardar_sinal_inicio(J, cfg.btn_start, BTN_STOP);
         if ~prosseguir
-            fprintf('Início cancelado pelo joystick antes da decolagem.\n');
-            if audit_fid >= 0
-                fclose(audit_fid);
-            end
+            fprintf('Início cancelado pelo joystick.\n');
+            if audit_fid >= 0, fclose(audit_fid); end
             rosshutdown;
             return;
         end
@@ -214,27 +148,15 @@ if strcmp(MODO_BEBOP, 'off')
     virtual_B.p = [x1; y1; z1 + rho_f];
     virtual_B.psi = 0;
     virtual_B.v_body = zeros(4, 1);
-    x2 = virtual_B.p(1);
-    y2 = virtual_B.p(2);
-    z2 = virtual_B.p(3);
+    x2 = virtual_B.p(1); y2 = virtual_B.p(2); z2 = virtual_B.p(3);
     psi2 = virtual_B.psi;
     ts2 = ts1;
 else
     [x2, y2, z2, psi2, ts2] = ler_pose(pose_B);
 end
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% MODIFICAÇÃO: watchdog de OptiTrack (timeout de pose parada).
-% Motivo: ver comentário em ler_pose. Copiado do padrão usado em
-% formacion_limo_bebop_final.m (checagem de Header.Stamp + timeout de 0.5 s).
-% Motivo de funcionar: garante que vB_meas e dvd_B nunca sejam calculados a
-% partir de uma pose "congelada" ou de uma amostra atrasada, que produziria
-% uma falsa velocidade zero seguida de um salto quando a amostra nova
-% chegasse — exatamente o tipo de pico de derivada que o filtro dvd_B_filt
-% não consegue distinguir de um comando real.
-% Impacto esperado: para o experimento com segurança (comando nulo + pouso)
-% se o OptiTrack parar de atualizar por mais de 0.5 s.
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Watchdog do OptiTrack: aborta se a pose ficar parada por > 0.5 s, para
+% que vB_meas/dvd_B nunca sejam calculados a partir de uma amostra atrasada.
 cfg.optitrack_timeout_s = 0.5;
 last_ts_L = ts1; last_update_L = tic;
 last_ts_B = ts2; last_update_B = tic;
@@ -245,17 +167,8 @@ poseB_ant = [x2; y2; z2];
 poseB_psi_ant = psi2;
 t_ant = 0;
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% MODIFICAÇÃO: novos estados para rate limiter e filtro de derivada do Bebop.
-% Motivo: cmdB_prev guarda o último comando REALMENTE ENVIADO (pós-saturação
-% e pós-rate-limit); ao usar esse valor como referência do limitador de taxa
-% no próximo ciclo (em vez do alvo não saturado), o próprio limitador se
-% torna anti-windup: nunca "recupera de um salto" que nunca foi de fato
-% comandado. dvd_B_filt guarda a derivada filtrada usada no lugar da
-% diferença finita bruta.
-% Impacto esperado: elimina picos de comando e evita acúmulo de erro apenas
-% teórico (windup) após saturação.
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% cmdB_prev guarda o último comando REALMENTE enviado (pós rate-limit), o
+% que torna o limitador de taxa também um anti-windup.
 cmdB_prev = zeros(4, 1);
 dvd_B_filt = zeros(4, 1);
 em_preparacao_ant = true;
@@ -270,20 +183,14 @@ H.cmdL = zeros(2, N);
 H.cmdB = zeros(4, N);
 H.dobs = zeros(1, N);
 H.satB = false(1, N);
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% MODIFICAÇÃO: histórico adicional para diagnosticar soft start e rate limit.
-% Motivo: permite auditar em pós-processamento se o rate limiter e o soft
-% start estavam de fato atenuando os comandos durante o experimento.
-% Impacto esperado: nenhum no controle; apenas instrumentação.
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 H.gamma = zeros(1, N);
 H.satRate = false(1, N);
 
 if use_preparation
-    fprintf(['Preparando o Bebop por %.1f s com LIMO parado. ', ...
-        'Botão %d do joystick para parar.\n'], preparation_time_s, BTN_STOP);
+    fprintf('Preparando o Bebop por %.1f s com LIMO parado. Botão %d para parar.\n', ...
+        preparation_time_s, BTN_STOP);
 else
-    fprintf('Iniciando formação. Botão %d do joystick para parar.\n', BTN_STOP);
+    fprintf('Iniciando formação. Botão %d para parar.\n', BTN_STOP);
 end
 t0 = tic;
 kf = 0;
@@ -291,11 +198,8 @@ try
     for k = 1:N
         tloop = tic;
         t = toc(t0);
-        if k == 1
-            dt = cfg.T;
-        else
-            dt = max(t - t_ant, 1e-3);
-        end
+        dt = cfg.T;
+        if k > 1, dt = max(t - t_ant, 1e-3); end
 
         btns = button(J);
         if numel(btns) >= BTN_STOP && btns(BTN_STOP)
@@ -305,24 +209,15 @@ try
 
         [x1, y1, z1, psi1, ts1] = ler_pose(pose_L);
         if strcmp(MODO_BEBOP, 'off')
-            x2 = virtual_B.p(1);
-            y2 = virtual_B.p(2);
-            z2 = virtual_B.p(3);
+            x2 = virtual_B.p(1); y2 = virtual_B.p(2); z2 = virtual_B.p(3);
             psi2 = virtual_B.psi;
             ts2 = ts1;
         else
             [x2, y2, z2, psi2, ts2] = ler_pose(pose_B);
         end
 
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        % MODIFICAÇÃO: verificação do watchdog de OptiTrack (ver ler_pose).
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        if ts1 > last_ts_L
-            last_ts_L = ts1; last_update_L = tic;
-        end
-        if ts2 > last_ts_B
-            last_ts_B = ts2; last_update_B = tic;
-        end
+        if ts1 > last_ts_L, last_ts_L = ts1; last_update_L = tic; end
+        if ts2 > last_ts_B, last_ts_B = ts2; last_update_B = tic; end
         if toc(last_update_L) > cfg.optitrack_timeout_s || ...
                 (~strcmp(MODO_BEBOP, 'off') && toc(last_update_B) > cfg.optitrack_timeout_s)
             fprintf('OptiTrack perdido por mais de %.1f s. Abortando.\n', cfg.optitrack_timeout_s);
@@ -330,42 +225,58 @@ try
         end
 
         poi = [x1 + cfg.a1 * cos(psi1); y1 + cfg.a1 * sin(psi1)];
+        p2 = [x2; y2; z2];
         em_preparacao = t < preparation_time_s;
         t_traj = max(0, t - preparation_time_s);
+        gamma = min(max(t / cfg.soft_start_time_s, cfg.soft_start_gamma_min), 1);
 
-        % Mesmo laço externo e interno usados em limoControl.m.
+        %% Laço externo: LIMO (cinemático) + Bebop (cluster space)
         if em_preparacao
             ref_xy = poi;
             v_limo_state = [0; 0];
             cmdL = [0; 0];
+            p2d = [poi; z1 + rho_f];
+            Kp_B_eff = gamma * Kp_B;
+            dx2 = Ls_B * tanh(Ls_B \ (Kp_B_eff * (p2d - p2)));
         else
-            [vd_L, ref_xy] = limo_reference_controller(t_traj, poi, psi1, TRAJ, cfg);
+            if TRAJ == 1
+                [ref_xy, ref_xy_dot] = lemniscata_reference(t_traj);
+            else
+                ref_xy = [0; 0]; ref_xy_dot = [0; 0];
+            end
+
+            q = cluster_state([poi; 0], p2);
+            qd = [ref_xy; 0; rho_f; alpha_f; beta_f];
+            qd_dot = [ref_xy_dot; 0; 0; 0; 0];
+
+            err_xy = attenuate_crossing_error(ref_xy - poi, ref_xy_dot, poi, cfg);
+            [kq_eff, lq_eff] = crossing_gain_scale(poi, cfg);
+            K = diag([kq_eff; kq_eff; 1; gamma * K_shape_diag]);
+            L = diag([lq_eff; lq_eff; 1; L_shape_diag]);
+
+            q_tilde = qd - q;
+            q_tilde(1:2) = err_xy;
+            q_tilde(5:6) = wrap_pi(q_tilde(5:6));
+            q_dot_r = qd_dot + L * tanh(L \ (K * q_tilde));
+
+            if cfg.use_obstacle_avoidance
+                q_dot_r = cluster_obstacle_nsb(q_dot_r, poi, cfg);
+            end
+
+            x_dot = cluster_jacobian_inv(q) * q_dot_r;
+            x_dot(3) = 0; % LIMO é terrestre: z1_dot sempre zero
+
+            A1inv = [cos(psi1), sin(psi1); -sin(psi1) / cfg.a1, cos(psi1) / cfg.a1];
+            u = A1inv * x_dot(1:2);
+            vd_L = [saturar(u(1), cfg.v_max); saturar(u(2), cfg.w_max)];
             v_limo_state = limo_inner_loop(vd_L, v_limo_state, cfg);
             cmdL = v_limo_state;
+
+            dx2 = x_dot(4:6);
+            p2d = [poi; 0] + cluster_offset(rho_f, alpha_f, beta_f);
         end
 
-        if em_preparacao
-            p2d = [poi; z1 + rho_f];
-        elseif TRAJ == 0
-            p2d = [0; 0; 1];
-        else
-            p2d = [poi(1) + rho_f * cos(alpha_f) * cos(beta_f);
-                   poi(2) + rho_f * sin(alpha_f) * cos(beta_f);
-                   z1 + rho_f * sin(beta_f)];
-        end
-        p2 = [x2; y2; z2];
-
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        % MODIFICAÇÃO: parede virtual (geofencing) para o Bebop.
-        % Motivo: formacao_2.m não tinha nenhum limite espacial de segurança
-        % para o Bebop; formacion_limo_bebop_final.m (que voou com sucesso)
-        % aborta e aterrissa se o Bebop sai de uma caixa [-1.8,1.8] m em xy
-        % e z<1.8 m. Copiado porque é uma rede de segurança independente do
-        % controlador — protege mesmo se o controlador calcular um comando
-        % ruim por qualquer motivo.
-        % Impacto esperado: nenhum em operação normal; interrompe o
-        % experimento com segurança em caso de comportamento anômalo.
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        % Parede virtual: rede de segurança independente do controlador.
         if ~strcmp(MODO_BEBOP, 'off') && ...
                 (abs(p2(1)) > cfg.bebop_limite_xy || abs(p2(2)) > cfg.bebop_limite_xy || ...
                  p2(3) > cfg.bebop_limite_z)
@@ -374,46 +285,12 @@ try
             break;
         end
 
-        vel_poi_world = [cos(psi1), -cfg.a1 * sin(psi1);
-                         sin(psi1),  cfg.a1 * cos(psi1)] * cmdL;
-        if TRAJ == 0
-            vel_poi_world = [0; 0];
-        end
-
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        % MODIFICAÇÃO: soft start dos ganhos do Bebop (Kp_B, KD_B).
-        % Motivo: pedido explícito de robustez — os ganhos devem crescer
-        % suavemente em vez de aplicar o ganho total desde o primeiro ciclo
-        % após o takeoff/hover, quando o erro de formação inicial (posição
-        % de decolagem do Bebop vs. p2d) pode ser grande.
-        % Impacto esperado: evita um transiente agressivo de comando logo
-        % após a fase de takeoff/hover, sem alterar o ganho em regime
-        % permanente (gamma satura em 1 após soft_start_time_s).
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        gamma = min(max(t / cfg.soft_start_time_s, cfg.soft_start_gamma_min), 1);
-        Kp_B_eff = gamma * Kp_B;
-        KD_B_eff = gamma * KD_B;
-
-        dx2 = [vel_poi_world; 0] + Ls_B * tanh(Ls_B \ (Kp_B_eff * (p2d - p2)));
-
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        % MODIFICAÇÃO: saturação de nível 1 (velocidade mundo desejada dx2)
-        % antes de passar para o corpo e para o compensador dinâmico.
-        % Motivo: requisito explícito de saturação em dois níveis. O tanh
-        % já limita a parcela de erro de posição, mas não limita a soma com
-        % o feedforward vel_poi_world; saturar dx2 garante um teto explícito
-        % e documentado por eixo antes de qualquer outro cálculo.
-        % Impacto esperado: vd_B nunca pede, por construção, mais que
-        % vd_B_max, reduzindo a chance de o nível 2 (comando final) saturar
-        % com folga insuficiente para a ação de derivada/damping.
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        %% Laço interno: Bebop (compensação dinâmica)
         dx2 = [saturar(dx2(1), vd_B_max(1));
                saturar(dx2(2), vd_B_max(2));
-               saturar(dx2(3), vd_B_max(3))];
+               saturar(dx2(3), vd_B_max(3))]; % nível 1
 
-        A2inv = [cos(psi2), sin(psi2), 0;
-                 -sin(psi2), cos(psi2), 0;
-                 0, 0, 1];
+        A2inv = [cos(psi2), sin(psi2), 0; -sin(psi2), cos(psi2), 0; 0, 0, 1];
         if strcmp(MODO_BEBOP, 'off')
             vB_meas = virtual_B.v_body;
         else
@@ -422,62 +299,33 @@ try
             vB_meas = [A2inv * velWB; psidot2];
         end
         vd_B = [A2inv * dx2; 0];
+        KD_B_eff = gamma * KD_B;
 
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        % MODIFICAÇÃO: reset da derivada na transição preparação -> formação
-        % e filtro passa-baixa + saturação de dvd_B.
-        % Motivo: p2d muda de fórmula entre a fase de preparação e a fase
-        % ativa (linhas ~189-197), o que pode gerar um salto instantâneo em
-        % vd_B nesse instante; diferenciar esse salto por diferença finita
-        % bruta produz um pico de "aceleração" explosivo — exatamente o tipo
-        % de evento citado no diagnóstico (docs/diagnostico_formacao_2_queda_bebop.md)
-        % como gatilho de saturação e queda. O filtro passa-baixa (alpha) e o
-        % limite cfg.dvd_B_max atenuam ruído residual da diferenciação da
-        % pose do OptiTrack em qualquer outro instante.
-        % Impacto esperado: elimina o pico de derivada na troca de fase e
-        % limita picos de derivada numérica em regime normal.
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        % dvd_B: reset na transição preparação->formação (p2d muda de
+        % fórmula, evita pico de derivada) + filtro passa-baixa + saturação.
         transicao_prep_formacao = em_preparacao_ant && ~em_preparacao;
         if k == 1 || transicao_prep_formacao
-            dvd_B_raw = zeros(4, 1);
             dvd_B_filt = zeros(4, 1);
         else
             dvd_B_raw = (vd_B - vd_B_ant) / dt;
-            dvd_B_filt = (1 - cfg.dvd_B_filter_alpha) * dvd_B_filt + ...
-                cfg.dvd_B_filter_alpha * dvd_B_raw;
+            dvd_B_filt = (1 - cfg.dvd_B_filter_alpha) * dvd_B_filt + cfg.dvd_B_filter_alpha * dvd_B_raw;
         end
         dvd_B_filt = max(min(dvd_B_filt, cfg.dvd_B_max), -cfg.dvd_B_max);
         dvd_B = dvd_B_filt;
 
         cmdB_raw = f1 \ (dvd_B + KD_B_eff * (vd_B - vB_meas) + f2 * vB_meas);
+        cmdB_satN2 = max(min(cmdB_raw, cmdB_max), -cmdB_max); % nível 2
 
-        % Nível 2: saturação do comando final por eixo (ver MODIFICAÇÃO acima, cmdB_max).
-        cmdB_satN2 = max(min(cmdB_raw, cmdB_max), -cmdB_max);
-
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        % MODIFICAÇÃO: rate limiter (limitador de taxa de variação) do
-        % comando enviado ao Bebop, com anti-windup implícito.
-        % Motivo: requisito explícito — nenhum comando pode variar
-        % instantaneamente. O limite é aplicado sobre cmdB_prev, que é o
-        % último comando REALMENTE ENVIADO (já saturado e já rate-limited no
-        % ciclo anterior), não sobre o alvo bruto cmdB_raw. Isso é o próprio
-        % mecanismo de anti-windup pedido: o limitador nunca tenta
-        % "recuperar" um salto que na prática nunca foi comandado.
-        % Impacto esperado: comandos variam de forma suave mesmo quando o
-        % cálculo instantâneo pede uma mudança grande (ex.: pico de ruído,
-        % início da formação, desvio de obstáculo).
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        % Rate limiter sobre cmdB_prev (último comando enviado) = anti-windup.
         delta_max = cfg.cmdB_rate_max * dt;
-        delta_cmd = cmdB_satN2 - cmdB_prev;
-        delta_cmd = max(min(delta_cmd, delta_max), -delta_max);
+        delta_cmd = max(min(cmdB_satN2 - cmdB_prev, delta_max), -delta_max);
         cmdB = cmdB_prev + delta_cmd;
         satB_rate = any(abs(cmdB - cmdB_satN2) > 1e-9);
 
         audit_step = max(1, round(cfg.audit_period / cfg.T));
         if audit_fid >= 0 && (k == 1 || mod(k - 1, audit_step) == 0)
-            registrar_auditoria(audit_fid, t, t_traj, em_preparacao, dt, MODO_BEBOP, ...
-                TRAJ, poi, ref_xy, psi1, ...
-                p2, p2d, psi2, A2inv, dx2, vB_meas, vd_B, dvd_B, ...
+            registrar_auditoria(audit_fid, t, t_traj, em_preparacao, dt, MODO_BEBOP, TRAJ, ...
+                poi, ref_xy, psi1, p2, p2d, psi2, A2inv, dx2, vB_meas, vd_B, dvd_B, ...
                 cmdB_raw, cmdB, f1, f2, KD_B_eff);
         end
 
@@ -519,8 +367,7 @@ try
 
         if mod(k, 30) == 0
             if em_preparacao
-                fprintf('Preparação t=%4.1fs | alvo Bebop=(%+.2f,%+.2f,%+.2f)\n', ...
-                    t, p2d(1), p2d(2), p2d(3));
+                fprintf('Preparação t=%4.1fs | alvo Bebop=(%+.2f,%+.2f,%+.2f)\n', t, p2d(1), p2d(2), p2d(3));
             else
                 fprintf('t=%5.1fs | PoI=(%+.2f,%+.2f) ref=(%+.2f,%+.2f) | v=%+.2f w=%+.2f\n', ...
                     t_traj, poi(1), poi(2), ref_xy(1), ref_xy(2), cmdL(1), cmdL(2));
@@ -532,34 +379,17 @@ catch ME
     fprintf(2, 'ERRO no loop: %s\n', ME.message);
 end
 
-msg_L.Linear.X = 0;
-msg_L.Linear.Y = 0;
-msg_L.Linear.Z = 0;
-msg_L.Angular.Z = 0;
+%% Encerramento
+msg_L.Linear.X = 0; msg_L.Linear.Y = 0; msg_L.Linear.Z = 0; msg_L.Angular.Z = 0;
 send(pub_L, msg_L);
 if ~strcmp(MODO_BEBOP, 'off')
-    msg_B.Linear.X = 0;
-    msg_B.Linear.Y = 0;
-    msg_B.Linear.Z = 0;
-    msg_B.Angular.Z = 0;
+    msg_B.Linear.X = 0; msg_B.Linear.Y = 0; msg_B.Linear.Z = 0; msg_B.Angular.Z = 0;
     send(pub_B, msg_B);
-end
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% MODIFICAÇÃO: pouso automático ao final passa a depender de "está enviando
-% cmd_vel real ao Bebop" (MODO_BEBOP ~= 'off'), não mais de "o script fez o
-% takeoff" (MODO_BEBOP=='voo').
-% Motivo: com decolagem manual (cfg.auto_takeoff=false), o script ainda é
-% responsável por pousar o Bebop com segurança ao final do experimento ou
-% em caso de aborto — do contrário, um Bebop decolado manualmente em
-% MODO_BEBOP='teste' ficaria pairando sem pouso automático.
-% Impacto esperado: nenhuma mudança quando MODO_BEBOP=='voo'; em
-% MODO_BEBOP='teste' com Bebop real, o script agora também envia land().
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-if ~strcmp(MODO_BEBOP, 'off')
-    send(pub_LD, msg_LD);
+    send(pub_LD, msg_LD); % pouso sempre que há Bebop real, mesmo em decolagem manual
 end
 pause(0.5);
 rosshutdown;
+
 if audit_fid >= 0
     if kf > 0
         idx_audit = 1:kf;
@@ -570,8 +400,7 @@ if audit_fid >= 0
         fprintf(audit_fid, 'Erro máximo do Bebop [m]: %.6f\n', max(erro_norma));
         fprintf(audit_fid, 'Erro final do Bebop [m]: %.6f\n', erro_norma(end));
         fprintf(audit_fid, 'Distância mínima LIMO-obstáculo [m]: %.6f\n', min(H.dobs(idx_audit)));
-        fprintf(audit_fid, 'Amostras com saturação do Bebop: %d de %d\n', ...
-            nnz(H.satB(idx_audit)), kf);
+        fprintf(audit_fid, 'Amostras com saturação do Bebop: %d de %d\n', nnz(H.satB(idx_audit)), kf);
     end
     fprintf(audit_fid, 'Fim: %s\n', datestr(now, 'yyyy-mm-dd HH:MM:SS'));
     fclose(audit_fid);
@@ -591,116 +420,45 @@ if kf > 1
     legend('Location', 'bestoutside');
 end
 
-function prosseguir = aguardar_sinal_inicio(J, btn_start, btn_stop)
-    % Ver MODIFICAÇÃO de decolagem manual (bloco "Decolagem manual" acima).
-    % Bloqueia até o piloto confirmar (botao_start) ou cancelar (botao_stop).
-    prosseguir = true;
-    while true
-        btns = button(J);
-        if numel(btns) >= btn_stop && btns(btn_stop)
-            prosseguir = false;
-            return;
-        end
-        if numel(btns) >= btn_start && btns(btn_start)
-            return;
-        end
-        pause(0.05);
-    end
+%% Funções locais — cluster (Estrutura Virtual)
+
+function q = cluster_state(p1, p2)
+    % q = [xf;yf;zf;rho;alpha;beta]; offset = p2-p1 = rho*[ca*cb; sa*cb; sb]
+    d = p2 - p1;
+    rho = norm(d);
+    beta = asin(max(min(d(3) / max(rho, 1e-6), 1), -1));
+    alpha = atan2(d(2), d(1));
+    q = [p1; rho; alpha; beta];
 end
 
-function [x, y, z, psi, tstamp] = ler_pose(sub)
-    p = sub.LatestMessage;
-    quat = [p.Pose.Orientation.W, p.Pose.Orientation.X, ...
-            p.Pose.Orientation.Y, p.Pose.Orientation.Z];
-    eul = quat2eul(quat);
-    x = p.Pose.Position.X;
-    y = p.Pose.Position.Y;
-    z = p.Pose.Position.Z;
-    psi = eul(1);
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    % MODIFICAÇÃO: ler_pose agora também retorna o timestamp do header.
-    % Motivo: docs/diagnostico_formacao_2_queda_bebop.md (item 3) aponta que
-    % o código lia apenas LatestMessage sem checar se a amostra era nova,
-    % permitindo que uma pose repetida/atrasada do OptiTrack alimentasse
-    % vB_meas e dvd_B com ruído/degraus espúrios, amplificados pelo
-    % compensador dinâmico (KD_B, f1\...). O código que voou com sucesso
-    % (formacion_limo_bebop_final.m) só atualiza pose e aciona emergência
-    % se o timestamp ficar parado por mais de 0.5 s.
-    % Impacto esperado: permite implementar o watchdog de OptiTrack no laço
-    % principal sem alterar a lógica de controle em si.
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    tstamp = double(p.Header.Stamp.Sec) + double(p.Header.Stamp.Nsec) * 1e-9;
+function offset = cluster_offset(rho, alpha, beta)
+    offset = rho * [cos(alpha) * cos(beta); sin(alpha) * cos(beta); sin(beta)];
 end
 
-function [ref_xy, ref_xy_dot] = lemniscata_reference(t)
-    phase_x = 2 * pi * t / 40;
-    phase_y = 4 * pi * t / 40;
-    ref_xy = [0.75 * sin(phase_x); 0.75 * sin(phase_y)];
-    ref_xy_dot = [0.75 * (2 * pi / 40) * cos(phase_x);
-                  0.75 * (4 * pi / 40) * cos(phase_y)];
+function J_inv = cluster_jacobian_inv(q)
+    rho = q(4); alpha = q(5); beta = q(6);
+    ca = cos(alpha); sa = sin(alpha);
+    cb = cos(beta);  sb = sin(beta);
+    S = [ca * cb, -rho * sa * cb, -rho * ca * sb;
+         sa * cb,  rho * ca * cb, -rho * sa * sb;
+         sb,       0,              rho * cb];
+    J_inv = [eye(3), zeros(3); eye(3), S];
 end
 
-function [v_d, ref_xy] = limo_reference_controller(t, poi, psi, traj, cfg)
-    if traj == 1
-        [ref_xy, ref_xy_dot] = lemniscata_reference(t);
-    else
-        ref_xy = [0; 0];
-        ref_xy_dot = [0; 0];
-    end
-    err_xy = ref_xy - poi;
-    err_xy = attenuate_crossing_error(err_xy, ref_xy_dot, poi, cfg);
-    [kq_eff, lq_eff] = crossing_gain_scale(poi, cfg);
-    vel_poi = ref_xy_dot + lq_eff * tanh((kq_eff / max(lq_eff, 1e-6)) * err_xy);
-    if cfg.use_obstacle_avoidance
-        vel_poi = apply_obstacle_null_space_xy(vel_poi, poi, cfg);
-    end
-    A1inv = [cos(psi), sin(psi);
-             -sin(psi) / cfg.a1, cos(psi) / cfg.a1];
-    u = A1inv * vel_poi;
-    v_d = [saturar(u(1), cfg.v_max); saturar(u(2), cfg.w_max)];
-end
-
-function err_xy = attenuate_crossing_error(err_xy, ref_xy_dot, poi, cfg)
-    dist_cross = norm(poi - cfg.crossing_center);
-    if dist_cross >= cfg.crossing_zone_radius || norm(ref_xy_dot) < 1e-4
-        return;
-    end
-    tangent = ref_xy_dot / norm(ref_xy_dot);
-    err_along = dot(err_xy, tangent) * tangent;
-    err_cross = err_xy - err_along;
-    blend = (cfg.crossing_zone_radius - dist_cross) / cfg.crossing_zone_radius;
-    cross_gain = cfg.crossing_cross_track_gain + ...
-        (1 - cfg.crossing_cross_track_gain) * (1 - blend);
-    err_xy = err_along + cross_gain * err_cross;
-end
-
-function [kq_eff, lq_eff] = crossing_gain_scale(poi, cfg)
-    dist_cross = norm(poi - cfg.crossing_center);
-    if dist_cross >= cfg.crossing_zone_radius
-        kq_eff = cfg.kq;
-        lq_eff = cfg.lq;
-        return;
-    end
-    scale = cfg.crossing_feedback_min + (1 - cfg.crossing_feedback_min) * ...
-        (dist_cross / cfg.crossing_zone_radius)^2;
-    kq_eff = cfg.kq * scale;
-    lq_eff = cfg.lq * scale;
-end
-
-function vel_xy = apply_obstacle_null_space_xy(vel_xy, poi, cfg)
-    offset = poi - cfg.obstacle_center;
+function q_dot_safe = cluster_obstacle_nsb(q_dot_formation, poi_xy, cfg)
+    % NSB (Eq. 5.13): evasão com prioridade máxima, formação projetada no
+    % espaço nulo da tarefa de evasão.
+    offset = poi_xy - cfg.obstacle_center;
     distance = norm(offset);
+    q_dot_safe = q_dot_formation;
     if distance >= cfg.obstacle_influence_radius || distance <= 1e-6
         return;
     end
     grad = obstacle_repulsive_gradient(offset, cfg);
-    grad_mag = norm(grad);
-    if grad_mag <= 1e-9
-        return;
-    end
-    task_dir = grad / grad_mag;
-    null_projector = eye(2) - task_dir * task_dir.';
-    vel_xy = grad + null_projector * vel_xy;
+    J1 = [eye(2), zeros(2, 4)];
+    J1_pinv = J1.';
+    null_proj = eye(6) - J1_pinv * J1;
+    q_dot_safe = J1_pinv * grad + null_proj * q_dot_formation;
 end
 
 function grad = obstacle_repulsive_gradient(offset, cfg)
@@ -716,8 +474,7 @@ function grad = obstacle_repulsive_gradient(offset, cfg)
     if ~isempty(cfg.obstacle_potential_shape_a), a = cfg.obstacle_potential_shape_a; end
     if ~isempty(cfg.obstacle_potential_shape_b), b = cfg.obstacle_potential_shape_b; end
     n = cfg.obstacle_potential_exponent;
-    dx = offset(1);
-    dy = offset(2);
+    dx = offset(1); dy = offset(2);
     scale = cfg.obstacle_potential_gain * exp(-((dx / a)^n + (dy / b)^n)) * n;
     grad = [scale * sign(dx) * abs(dx)^(n - 1) / a^n;
             scale * sign(dy) * abs(dy)^(n - 1) / b^n];
@@ -725,6 +482,39 @@ function grad = obstacle_repulsive_gradient(offset, cfg)
     if grad_norm > cfg.obstacle_potential_vmax
         grad = grad * (cfg.obstacle_potential_vmax / grad_norm);
     end
+end
+
+function err_xy = attenuate_crossing_error(err_xy, ref_xy_dot, poi, cfg)
+    dist_cross = norm(poi - cfg.crossing_center);
+    if dist_cross >= cfg.crossing_zone_radius || norm(ref_xy_dot) < 1e-4
+        return;
+    end
+    tangent = ref_xy_dot / norm(ref_xy_dot);
+    err_along = dot(err_xy, tangent) * tangent;
+    err_cross = err_xy - err_along;
+    blend = (cfg.crossing_zone_radius - dist_cross) / cfg.crossing_zone_radius;
+    cross_gain = cfg.crossing_cross_track_gain + (1 - cfg.crossing_cross_track_gain) * (1 - blend);
+    err_xy = err_along + cross_gain * err_cross;
+end
+
+function [kq_eff, lq_eff] = crossing_gain_scale(poi, cfg)
+    dist_cross = norm(poi - cfg.crossing_center);
+    if dist_cross >= cfg.crossing_zone_radius
+        kq_eff = cfg.kq;
+        lq_eff = cfg.lq;
+        return;
+    end
+    scale = cfg.crossing_feedback_min + (1 - cfg.crossing_feedback_min) * (dist_cross / cfg.crossing_zone_radius)^2;
+    kq_eff = cfg.kq * scale;
+    lq_eff = cfg.lq * scale;
+end
+
+function [ref_xy, ref_xy_dot] = lemniscata_reference(t)
+    phase_x = 2 * pi * t / 40;
+    phase_y = 4 * pi * t / 40;
+    ref_xy = [0.75 * sin(phase_x); 0.75 * sin(phase_y)];
+    ref_xy_dot = [0.75 * (2 * pi / 40) * cos(phase_x);
+                  0.75 * (4 * pi / 40) * cos(phase_y)];
 end
 
 function v_state = limo_inner_loop(v_d, v_state, cfg)
@@ -742,9 +532,65 @@ function v_state = limo_inner_loop(v_d, v_state, cfg)
     v_state = [saturar(v_state(1), cfg.v_max); saturar(v_state(2), cfg.w_max)];
 end
 
+%% Funções locais — ROS/IO e utilitários
+
+function prosseguir = aguardar_sinal_inicio(J, btn_start, btn_stop)
+    prosseguir = true;
+    while true
+        btns = button(J);
+        if numel(btns) >= btn_stop && btns(btn_stop)
+            prosseguir = false;
+            return;
+        end
+        if numel(btns) >= btn_start && btns(btn_start)
+            return;
+        end
+        pause(0.05);
+    end
+end
+
+function [x, y, z, psi, tstamp] = ler_pose(sub)
+    p = sub.LatestMessage;
+    quat = [p.Pose.Orientation.W, p.Pose.Orientation.X, p.Pose.Orientation.Y, p.Pose.Orientation.Z];
+    eul = quat2eul(quat);
+    x = p.Pose.Position.X;
+    y = p.Pose.Position.Y;
+    z = p.Pose.Position.Z;
+    psi = eul(1);
+    tstamp = double(p.Header.Stamp.Sec) + double(p.Header.Stamp.Nsec) * 1e-9;
+end
+
+function estado = avancar_bebop_virtual(estado, u, dt, f1, f2)
+    % Planta usada apenas em MODO_BEBOP='off'.
+    R = [cos(estado.psi), -sin(estado.psi), 0; sin(estado.psi), cos(estado.psi), 0; 0, 0, 1];
+    estado.p = estado.p + dt * R * estado.v_body(1:3);
+    estado.psi = wrap_pi(estado.psi + dt * estado.v_body(4));
+    estado.v_body = estado.v_body + dt * (f1 * u - f2 * estado.v_body);
+end
+
+function y = saturar(u, umax)
+    y = max(min(u, umax), -umax);
+end
+
+function ang = wrap_pi(ang)
+    ang = atan2(sin(ang), cos(ang));
+end
+
+function desenhar_circulo(xc, yc, r, estilo)
+    th = linspace(0, 2 * pi, 100);
+    plot(xc + r * cos(th), yc + r * sin(th), estilo, 'HandleVisibility', 'off');
+end
+
+function imprimir_matriz(fid, M)
+    for i = 1:size(M, 1)
+        fprintf(fid, '  ');
+        fprintf(fid, '%+12.6f ', M(i, :));
+        fprintf(fid, '\n');
+    end
+end
+
 function registrar_auditoria(fid, t, t_traj, em_preparacao, dt, modo_bebop, traj, poi, ref_xy, psi1, ...
-        p2, p2d, psi2, A2inv, dx2, vB_meas, vd_B, dvd_B, ...
-        cmdB_raw, cmdB, f1, f2, KD_B)
+        p2, p2d, psi2, A2inv, dx2, vB_meas, vd_B, dvd_B, cmdB_raw, cmdB, f1, f2, KD_B)
     A2 = A2inv.';
     dx2_reconstruido = A2 * vd_B(1:3);
     residuo_cinematico = dx2_reconstruido - dx2;
@@ -768,65 +614,21 @@ function registrar_auditoria(fid, t, t_traj, em_preparacao, dt, modo_bebop, traj
     fprintf(fid, 'Erro p2d - p2 [m]:\n'); fprintf(fid, '  %+.6f\n', p2d - p2);
     fprintf(fid, 'Yaw Bebop: %+.6f rad (%+.3f graus)\n', psi2, rad2deg(psi2));
 
-    fprintf(fid, '--- MATRIZES CINEMÁTICAS DO BEBOP ---\n');
-    fprintf(fid, 'A2: velocidade no mundo = A2 * velocidade no corpo\n');
+    fprintf(fid, '--- CINEMÁTICA DO BEBOP ---\n');
     imprimir_matriz(fid, A2);
-    fprintf(fid, 'A2inv: velocidade no corpo = A2inv * velocidade no mundo\n');
     imprimir_matriz(fid, A2inv);
-
-    fprintf(fid, '--- RESULTADO CINEMÁTICO ---\n');
     fprintf(fid, 'dx2 desejada no mundo [m/s]:\n'); fprintf(fid, '  %+.6f\n', dx2);
     fprintf(fid, 'vB desejada no corpo [vx; vy; vz; psidot]:\n'); fprintf(fid, '  %+.6f\n', vd_B);
-    fprintf(fid, 'A2 * vB_desejada(1:3) [m/s]:\n'); fprintf(fid, '  %+.6f\n', dx2_reconstruido);
-    fprintf(fid, 'Resíduo A2*vB_desejada - dx2 [m/s]:\n'); fprintf(fid, '  %+.6e\n', residuo_cinematico);
-    fprintf(fid, 'Norma do resíduo cinemático: %.3e\n', norm(residuo_cinematico));
+    fprintf(fid, 'Resíduo cinemático:\n'); fprintf(fid, '  %+.6e\n', residuo_cinematico);
 
     fprintf(fid, '--- COMPENSADOR DINÂMICO DO BEBOP ---\n');
     fprintf(fid, 'vB medida [vx; vy; vz; psidot]:\n'); fprintf(fid, '  %+.6f\n', vB_meas);
     fprintf(fid, 'dvd_B [m/s²; rad/s²]:\n'); fprintf(fid, '  %+.6f\n', dvd_B);
-    fprintf(fid, 'Aceleração requerida dvd_B + KD*(vd_B-vB_medida):\n');
-    fprintf(fid, '  %+.6f\n', aceleracao_requerida);
+    fprintf(fid, 'Aceleração requerida:\n'); fprintf(fid, '  %+.6f\n', aceleracao_requerida);
     fprintf(fid, 'Comando bruto f1\\(...):\n'); fprintf(fid, '  %+.6f\n', cmdB_raw);
     fprintf(fid, 'Comando após saturação:\n'); fprintf(fid, '  %+.6f\n', cmdB);
-    fprintf(fid, 'Erro causado pela saturação:\n'); fprintf(fid, '  %+.6f\n', erro_saturacao);
-    fprintf(fid, 'f1*cmd_bruto - f2*vB_medida:\n');
-    fprintf(fid, '  %+.6f\n', aceleracao_modelo_bruta);
-    fprintf(fid, 'Resíduo dinâmico bruto:\n');
-    fprintf(fid, '  %+.6e\n', aceleracao_modelo_bruta - aceleracao_requerida);
-    fprintf(fid, 'Norma do resíduo dinâmico bruto: %.3e\n', ...
-        norm(aceleracao_modelo_bruta - aceleracao_requerida));
-    fprintf(fid, 'f1*cmd_saturado - f2*vB_medida:\n');
-    fprintf(fid, '  %+.6f\n', aceleracao_modelo_saturada);
+    fprintf(fid, 'Erro de saturação:\n'); fprintf(fid, '  %+.6f\n', erro_saturacao);
+    fprintf(fid, 'Resíduo dinâmico bruto:\n'); fprintf(fid, '  %+.6e\n', aceleracao_modelo_bruta - aceleracao_requerida);
+    fprintf(fid, 'f1*cmd_saturado - f2*vB_medida:\n'); fprintf(fid, '  %+.6f\n', aceleracao_modelo_saturada);
     fprintf(fid, '\n');
-end
-
-function estado = avancar_bebop_virtual(estado, u, dt, f1, f2)
-    % Planta usada apenas em MODO_BEBOP='off'.
-    R = [cos(estado.psi), -sin(estado.psi), 0;
-         sin(estado.psi), cos(estado.psi), 0;
-         0, 0, 1];
-    estado.p = estado.p + dt * R * estado.v_body(1:3);
-    estado.psi = wrap_pi(estado.psi + dt * estado.v_body(4));
-    estado.v_body = estado.v_body + dt * (f1 * u - f2 * estado.v_body);
-end
-
-function imprimir_matriz(fid, M)
-    for i = 1:size(M, 1)
-        fprintf(fid, '  ');
-        fprintf(fid, '%+12.6f ', M(i, :));
-        fprintf(fid, '\n');
-    end
-end
-
-function y = saturar(u, umax)
-    y = max(min(u, umax), -umax);
-end
-
-function ang = wrap_pi(ang)
-    ang = atan2(sin(ang), cos(ang));
-end
-
-function desenhar_circulo(xc, yc, r, estilo)
-    th = linspace(0, 2 * pi, 100);
-    plot(xc + r * cos(th), yc + r * sin(th), estilo, 'HandleVisibility', 'off');
 end
