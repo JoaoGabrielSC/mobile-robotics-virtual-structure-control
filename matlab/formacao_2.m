@@ -66,8 +66,11 @@ f2 = diag([0.18227, 0.17095, 4.001, 4.7295]);
 
 cmdB_max = [0.5; 0.5; 0.3; 0.5];
 
-cfg.bebop_limite_xy = 1.8;         % parede virtual horizontal [m]
-cfg.bebop_limite_z = 1.8;          % parede virtual vertical [m]
+cfg.bebop_limite_x_pos = 1.8;      % parede virtual: limite em +x [m]
+cfg.bebop_limite_x_neg = -1.8;     % parede virtual: limite em -x [m]
+cfg.bebop_limite_y_pos = 1.8;      % parede virtual: limite em +y [m]
+cfg.bebop_limite_y_neg = -1.8;     % parede virtual: limite em -y [m]
+cfg.bebop_limite_z_pos = 1.8;      % parede virtual: limite em +z [m]
 
 MODO_BEBOP = 'teste'; % 'off', 'teste' ou 'voo'
 BTN_STOP = 1;
@@ -274,8 +277,9 @@ try
         % experimento com segurança em caso de comportamento anômalo.
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         if ~strcmp(MODO_BEBOP, 'off') && ...
-                (abs(p2(1)) > cfg.bebop_limite_xy || abs(p2(2)) > cfg.bebop_limite_xy || ...
-                 p2(3) > cfg.bebop_limite_z)
+                (p2(1) > cfg.bebop_limite_x_pos || p2(1) < cfg.bebop_limite_x_neg || ...
+                 p2(2) > cfg.bebop_limite_y_pos || p2(2) < cfg.bebop_limite_y_neg || ...
+                 p2(3) > cfg.bebop_limite_z_pos)
             fprintf('PAREDE VIRTUAL: Bebop fora dos limites (%.2f,%.2f,%.2f). Abortando.\n', ...
                 p2(1), p2(2), p2(3));
             break;

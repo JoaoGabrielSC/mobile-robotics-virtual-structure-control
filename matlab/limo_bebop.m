@@ -2,7 +2,7 @@
 % LIMO rastreia a lemniscata pelo seu PoI (laço externo + compensador
 % dinâmico). Bebop mantém a formação num offset fixo [rho_f, alpha_f, beta_f]
 % acima/ao lado do LIMO (laço externo tanh + compensador dinâmico + controle
-% cinemático de guinada). Parede virtual e watchdog do OptiTrack protegem o
+% cinemático de yaw). Parede virtual e watchdog do OptiTrack protegem o
 % Bebop independente do controlador. Versão enxuta de formacao_2.m — mesma
 % lógica de controle, sem o histórico de alterações e com auditoria reduzida
 % ao essencial (alvo, erro, comando).
@@ -37,13 +37,13 @@ offset_f = [rho_f * cos(beta_f) * cos(alpha_f);
             rho_f * cos(beta_f) * sin(alpha_f);
             rho_f * sin(beta_f)];
 
-%% Configuração — Bebop (laço externo, guinada, compensador dinâmico)
+%% Configuração — Bebop (laço externo, yaw, compensador dinâmico)
 Kp_B = diag([1.0, 1.0, 1.2]);
 Ls_B = diag([0.6, 0.6, 0.6]);
 KD_B = diag([2.5, 2.5, 2.0, 5.0]);
-cfg.yaw_d_B = 0.0;      % guinada desejada [rad], 0 = alinhado ao eixo X global
-cfg.k_yaw_B = 1.0;      % ganho do controle cinemático de guinada [1/s]
-cfg.wd_B_max = 0.6;     % saturação da taxa de guinada desejada [rad/s]
+cfg.yaw_d_B = 0.0;      % yaw desejado [rad], 0 = alinhado ao eixo X global
+cfg.k_yaw_B = 1.0;      % ganho do controle cinemático de yaw [1/s]
+cfg.wd_B_max = 0.6;     % saturação da taxa de yaw desejado [rad/s]
 f1 = diag([0.8417, 0.8354, 3.966, 9.8524]);
 f2 = diag([0.18227, 0.17095, 4.001, 4.7295]);
 cmdB_max = [0.5; 0.5; 0.3; 0.5];
@@ -239,7 +239,7 @@ try
             psidot2 = wrap_pi(psi2 - poseB_psi_ant) / dt;
             vB_meas = [A2inv * velWB; psidot2];
         end
-        w_d_B = cfg.k_yaw_B * wrap_pi(cfg.yaw_d_B - psi2); % controle cinemático de guinada
+        w_d_B = cfg.k_yaw_B * wrap_pi(cfg.yaw_d_B - psi2); % controle cinemático de yaw
         vd_B = [A2inv * dx2; saturar(w_d_B, cfg.wd_B_max)];
 
         % --- Malha interna: compensador dinâmico do Bebop ---
