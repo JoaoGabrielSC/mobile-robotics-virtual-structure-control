@@ -289,7 +289,7 @@ caminho do drone e obstáculo.
 
 ---
 
-## 7. Conclusão
+## 6. Conclusão
 
 Foi projetado um controlador de formação por estrutura virtual com arquitetura laço interno–laço externo para uma equipe heterogênea LIMO-Bebop. O desvio de obstáculos foi embutido como subtarefa de prioridade máxima por meio de um esquema baseado em espaço nulo com campo potencial, com a tarefa de formação projetada no espaço nulo da tarefa de
 desvio.
