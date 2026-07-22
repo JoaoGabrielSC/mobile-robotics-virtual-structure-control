@@ -129,7 +129,7 @@ primeiro_ciclo_voo = true;
 t0 = tic;
 t_ant = 0;
 
-[x1, y1, z1, psi1, ts1] = ler_pose(pose_L); %#ok<ASGLU>
+[x1, y1, z1, psi1, ts1] = ler_pose(pose_L); %#o
 [x2, y2, z2, psi2, ts2] = ler_pose(pose_B);
 
 last_ts_L = ts1; last_update_L = tic;
@@ -173,7 +173,7 @@ try
             poseB_ant = [x2; y2; z2];
             poseB_psi_ant = psi2;
             last_ts_B = ts2; last_update_B = tic;
-            [x1, y1, z1, psi1, ts1] = ler_pose(pose_L); %#ok<ASGLU>
+            [x1, y1, z1, psi1, ts1] = ler_pose(pose_L); %#o
             last_ts_L = ts1; last_update_L = tic;
 
             v_limo_state = [0; 0];
