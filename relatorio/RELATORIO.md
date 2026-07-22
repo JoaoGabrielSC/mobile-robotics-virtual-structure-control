@@ -1,9 +1,9 @@
 # Controle de Formação por Estrutura Virtual de um LIMO e um Bebop 2 com Desvio de Obstáculos por Espaço Nulo
 
-**Robótica Móvel — UFES, 2026/1 — Trabalho Prático**
+**Robótica Móvel - UFES, 2026/1 - Trabalho Prático**
 
-Filipe Nunes da Silva Mai
-João Gabriel S C
+- Filipe Nunes da Silva Mai
+- João Gabriel Santos Custodio
 ---
 
 ## Resumo
