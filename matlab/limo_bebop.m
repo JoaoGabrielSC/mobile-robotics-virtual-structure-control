@@ -58,14 +58,13 @@ cfg.obstacle_potential_exponent = 4;
 cfg.obstacle_potential_shape_a = [];
 cfg.obstacle_potential_shape_b = [];
 cfg.obstacle_potential_vmax = 0.80;
-cfg.crossing_center = [0.0; 0.0]; % atenua oscilação no cruzamento da lemniscata
-cfg.crossing_zone_radius = 0.01;
-cfg.crossing_feedback_min = 0.20;
-cfg.crossing_cross_track_gain = 0.35;
 
 %% Configuração — segurança e auditoria
-cfg.bebop_limite_xy = 1.8; % parede virtual horizontal [m]
-cfg.bebop_limite_z = 1.8;  % parede virtual vertical [m]
+cfg.bebop_limite_x_pos = 1.8;  % parede virtual: limite em +x [m]
+cfg.bebop_limite_x_neg = -1.8; % parede virtual: limite em -x [m]
+cfg.bebop_limite_y_pos = 1.8;  % parede virtual: limite em +y [m]
+cfg.bebop_limite_y_neg = -1.8; % parede virtual: limite em -y [m]
+cfg.bebop_limite_z_pos = 1.8;  % parede virtual: limite em +z [m]
 cfg.optitrack_timeout_s = 0.5; % watchdog de pose parada
 cfg.audit_enabled = true;
 cfg.audit_period = 1.0;
@@ -221,8 +220,9 @@ try
 
         % Parede virtual: rede de segurança independente do controlador.
         if ~strcmp(MODO_BEBOP, 'off') && ...
-                (abs(p2(1)) > cfg.bebop_limite_xy || abs(p2(2)) > cfg.bebop_limite_xy || ...
-                 p2(3) > cfg.bebop_limite_z)
+                (p2(1) > cfg.bebop_limite_x_pos || p2(1) < cfg.bebop_limite_x_neg || ...
+                 p2(2) > cfg.bebop_limite_y_pos || p2(2) < cfg.bebop_limite_y_neg || ...
+                 p2(3) > cfg.bebop_limite_z_pos)
             fprintf('PAREDE VIRTUAL: Bebop fora dos limites (%.2f,%.2f,%.2f). Abortando.\n', p2(1), p2(2), p2(3));
             break;
         end
@@ -386,40 +386,13 @@ function [v_d, ref_xy, vel_poi] = limo_reference_controller(t, poi, psi, traj, c
         ref_xy_dot = [0; 0];
     end
     err_xy = ref_xy - poi;
-    err_xy = attenuate_crossing_error(err_xy, ref_xy_dot, poi, cfg);
-    [kq_eff, lq_eff] = crossing_gain_scale(poi, cfg);
-    vel_poi = ref_xy_dot + lq_eff * tanh((kq_eff / max(lq_eff, 1e-6)) * err_xy);
+    vel_poi = ref_xy_dot + cfg.lq * tanh((cfg.kq / cfg.lq) * err_xy);
     if cfg.use_obstacle_avoidance
         vel_poi = apply_obstacle_null_space_xy(vel_poi, poi, cfg);
     end
     A1inv = [cos(psi), sin(psi); -sin(psi) / cfg.a1, cos(psi) / cfg.a1];
     u = A1inv * vel_poi;
     v_d = [saturar(u(1), cfg.v_max); saturar(u(2), cfg.w_max)];
-end
-
-function err_xy = attenuate_crossing_error(err_xy, ref_xy_dot, poi, cfg)
-    dist_cross = norm(poi - cfg.crossing_center);
-    if dist_cross >= cfg.crossing_zone_radius || norm(ref_xy_dot) < 1e-4
-        return;
-    end
-    tangent = ref_xy_dot / norm(ref_xy_dot);
-    err_along = dot(err_xy, tangent) * tangent;
-    err_cross = err_xy - err_along;
-    blend = (cfg.crossing_zone_radius - dist_cross) / cfg.crossing_zone_radius;
-    cross_gain = cfg.crossing_cross_track_gain + (1 - cfg.crossing_cross_track_gain) * (1 - blend);
-    err_xy = err_along + cross_gain * err_cross;
-end
-
-function [kq_eff, lq_eff] = crossing_gain_scale(poi, cfg)
-    dist_cross = norm(poi - cfg.crossing_center);
-    if dist_cross >= cfg.crossing_zone_radius
-        kq_eff = cfg.kq;
-        lq_eff = cfg.lq;
-        return;
-    end
-    scale = cfg.crossing_feedback_min + (1 - cfg.crossing_feedback_min) * (dist_cross / cfg.crossing_zone_radius)^2;
-    kq_eff = cfg.kq * scale;
-    lq_eff = cfg.lq * scale;
 end
 
 function v_state = limo_inner_loop(v_d, v_state, cfg)
