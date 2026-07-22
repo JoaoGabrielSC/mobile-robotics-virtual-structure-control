@@ -93,7 +93,7 @@ global, e a 1,299 m de altura.
 Para o ponto de controle, o laço externo usa uma lei do tipo *feedforward* mais proporcional saturado, na forma do controlador do espaço de cluster de [1, eq. 5.7],
 
 $$
-\dot{\mathbf{x}}_{r} = \dot{\mathbf{x}}_{d} + \mathbf{L}\tanh\!\left(\mathbf{L}^{-1}\mathbf{K}\,\tilde{\mathbf{x}}\right)
+\dot{\mathbf{x}}_{r} = \dot{\mathbf{x}}_{d} + \mathbf{L}\tanh\left(\mathbf{L}^{-1}\mathbf{K}\,\tilde{\mathbf{x}}\right)
 $$
 
 com `x̃ = x_d − x_f` e `ẋ_d` obtido analiticamente da derivada da lemniscata. A função
