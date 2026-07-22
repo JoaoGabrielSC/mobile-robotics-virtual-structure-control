@@ -183,11 +183,29 @@ Saturações suaves (`tanh`) e rígidas são aplicadas a todos os comandos. As r
 
 - botão de parada de emergência no joystick, que zera os comandos e pousa o drone;
 - bloco `try/catch` que pousa o drone em caso de erro em tempo de execução;
-- parede virtual (`|x| > 1,8 m`, `|y| > 1,8 m`, `z > 1,8 m`);
+- parede virtual (`||x| > 1,6 m`, `|y| > 1,1 m`, `z > 1,8 m`);
 - *watchdog* de perda de corpo rígido no OptiTrack (> 0,5 s), baseado no *timestamp* do
   cabeçalho da mensagem;
 - modo de ensaio pré-voo (`MODO_BEBOP = 'teste'`) que lê a pose e calcula os comandos sem
-  decolar.
+  decolar;
+- fase de separação manual ao final da trajetória, descrita a seguir.
+
+**Fase de separação manual.** Encerrada a trajetória, aos 120 s, o controle automático da
+formação é interrompido e o comando do quadrimotor é transferido ao operador, que dispõe
+de 12 s para conduzir o drone pelo joystick antes do pouso. O objetivo é retirar o
+quadrimotor de cima do robô terrestre caso a formação tenha terminado com o drone
+sobreposto a ele.
+
+A necessidade decorre da geometria da própria formação: com `α_f = 0` e `β_f` próximo de
+90°, a posição de equilíbrio do drone fica praticamente sobre o ponto de controle do LIMO.
+Um pouso automático nessa condição faria o quadrimotor descer diretamente sobre o robô
+terrestre. A intervenção manual afasta o drone antes da descida, constituindo uma camada
+adicional de proteção para ambos os robôs, independente do controlador — atua mesmo que a
+formação tenha terminado numa configuração não prevista.
+
+A mesma solução é adotada em [1] sob a forma de uma manobra automática de separação; aqui
+optou-se pela intervenção do operador por dispensar hipóteses sobre a posição final do
+LIMO e sobre a existência de espaço livre numa direção pré-definida.
 
 ---
 
@@ -236,9 +254,9 @@ Antes dos ensaios com o quadrimotor, o controlador foi verificado em simulação
 
 Figura 1 - Simulação. Trajetória desejada, caminho do ponto de controle do LIMO, obstáculo e zona de influência.
 
-![Simulação da formação LIMO-Bebop](images/limo_bebop_sim.png)
+![Simulação da formação LIMO-Bebop](images/sim_limo_bebo_75.png)
 
-Figura 2 - Simulação. Formação completa: além do LIMO, o caminho do Bebop obtido da planta virtual. O deslocamento horizontal constante de 0,750 m no eixo X, decorrente de `β_f = 60°`, é visível na separação entre as duas curvas.
+Figura 2 - Simulação. Formação completa: além do LIMO, o caminho do Bebop obtido da planta virtual. O deslocamento horizontal constante de 0,388 m no eixo X, decorrente de `β_f = 75°`, é visível na separação entre as duas curvas.
 
 A simulação confirma que a geometria da formação é mantida ao longo de toda a trajetória e que a subtarefa de desvio afasta o ponto de controle do obstáculo.
 
@@ -274,27 +292,88 @@ A Figura 4 mostra as três aproximações do obstáculo, em t ≈ 21, 61 e 101 s
 
 ### 5.2 Formação completa
 
-**Figura 2** — Experimento da formação completa: trajetória desejada, caminho do LIMO,
-caminho do drone e obstáculo.
-<!-- TODO -->
+O ensaio da formação completa foi realizado com o quadrimotor em voo, na configuração
+`β_f = 75°`, durante 124 s — três voltas completas da lemniscata mais 5 s de fase de
+preparação, na qual o LIMO permanece parado e o drone converge para a posição de formação.
+As métricas a seguir excluem a fase de preparação e foram obtidas da auditoria
+`audit_20260722_183650.txt`.
 
-**Figura 3** — Altitude do drone durante o experimento.
-<!-- TODO -->
+![Formação completa](images/trajetoria_xy.png)
+Figura 5 - Experimental. Formação completa: trajetória desejada, caminho do ponto de
+controle do LIMO, caminho do Bebop e obstáculo. O deslocamento horizontal constante de
+0,388 m no eixo X, decorrente de `β_f = 75°`, separa as duas trajetórias.
 
-**Figura 4** — Erro de formação do drone em relação ao ponto de controle.
-<!-- TODO -->
+![Vista 3D da formação](images/formacao_3d.png)
+Figura 6 - Experimental. Vista tridimensional da formação, com segmentos em cinza
+ligando o ponto de controle ao drone em instantes amostrados.
 
-**Figura 6** — Vista tridimensional da formação.
-<!-- TODO -->
+![Altitude do Bebop](images/altitude_bebop.png)
+Figura 7 - Experimental. Altitude do drone ao longo do tempo, comparada à referência
+da formação.
+
+![Erro de formação](images/erro_formacao.png)
+Figura 8 - Experimental. Erro de formação do drone em relação à posição desejada,
+total (3D) e projetado no plano horizontal.
+
+**Tabela II — Resultados do ensaio da formação completa**
+
+| Métrica | Valor |
+|---|---|
+| Erro de formação 3D | RMS 0,064 m, máx 0,180 m |
+| Erro de formação horizontal | RMS 0,055 m, máx 0,180 m |
+| Altitude do drone | 1,633 ± 0,033 m |
+| Erro de altitude | RMS 0,033 m, máx 0,146 m |
+| Amostras em saturação | 288 de 3686 (7,8%) |
+| Erro de rastreio do LIMO, longe do obstáculo | RMS 0,057 m, máx 0,135 m |
+| Erro de rastreio do LIMO, região do obstáculo | RMS 0,252 m, máx 0,357 m |
+| Distância mínima ao centro do obstáculo | 0,207 m |
+| Folga em relação ao raio físico (0,15 m) | 0,057 m |
+
+O erro de formação converge em cerca de 5 s a partir de um valor inicial de 1,19 m e
+permanece abaixo de 0,18 m durante toda a trajetória, com valor RMS de 0,064 m. A altitude
+é regulada com desvio-padrão de 0,033 m. O rastreio do LIMO manteve o mesmo desempenho
+observado no ensaio isolado, e a distância mínima ao obstáculo permaneceu acima do raio
+físico em todas as passagens.
+
+A saturação dos comandos do quadrimotor ocorreu em 7,8% das amostras, concentrada na fase
+de convergência inicial e nas curvas de maior curvatura da lemniscata.
+
+**Verificação da parede virtual.** Os extremos da trajetória do drone durante o ensaio, em
+comparação com os limites configurados, foram:
+
+| Eixo | Faixa percorrida | Limite | Folga |
+|---|---|---|---|
+| x | −0,371 a +1,138 m | ±1,6 m | 0,462 m |
+| y | −0,757 a +0,769 m | ±1,1 m | 0,331 m |
+| z | +1,482 a +1,738 m | 1,8 m | **0,062 m** |
+
+As folgas horizontais confirmam que a escolha de `β_f = 75°` mantém o drone dentro da área
+útil, resolvendo o problema observado com `β_f = 60°`. A folga vertical, entretanto, é
+pequena — ver a discussão na Seção 6.
 
 ---
 
 ## 6. Conclusão
 
-Foi projetado um controlador de formação por estrutura virtual com arquitetura laço interno–laço externo para uma equipe heterogênea LIMO-Bebop. O desvio de obstáculos foi embutido como subtarefa de prioridade máxima por meio de um esquema baseado em espaço nulo com campo potencial, com a tarefa de formação projetada no espaço nulo da tarefa de
-desvio.
+Foi projetado e validado experimentalmente um controlador de formação por estrutura
+virtual com arquitetura laço interno–laço externo para uma equipe heterogênea LIMO–Bebop.
+O desvio de obstáculos foi embutido como subtarefa de prioridade máxima por meio de um
+esquema baseado em espaço nulo com campo potencial, com a tarefa de formação projetada no
+espaço nulo da tarefa de desvio.
 
-Os ensaios na arena do LAB-AIR com o robô terrestre isolado mostraram rastreio de trajetória com erro RMS de 0,053 m e folga de 5,9 cm em relação ao obstáculo.
+Os ensaios na arena do LAB-AIR foram conduzidos em duas etapas. Com o robô terrestre
+isolado, o rastreio da lemniscata apresentou erro RMS de 0,053 m fora da região do
+obstáculo, com folga de 5,9 cm em relação ao raio físico. Com a formação completa em voo,
+o quadrimotor manteve a geometria da formação com erro RMS de 0,064 m e máximo de 0,180 m,
+com a altitude regulada em 1,633 ± 0,033 m e saturação dos comandos em 7,8% das amostras.
+
+A elevação da formação foi ajustada de 90° para 75° em função das dimensões da área de
+ensaio: o deslocamento horizontal do drone, `ρ_f\cos\beta_f`, cresce à medida que `β_f`
+diminui, e uma configuração preliminar com 60° levava o quadrimotor para fora do tatame. A
+verificação experimental confirmou folgas horizontais de 0,46 m e 0,33 m com `β_f = 75°`.
+A folga vertical de 0,062 m, entretanto, decorre de a referência de altitude ser calculada
+a partir do `z` medido do LIMO em vez de `z_f = 0`, e deve ser corrigida antes de novos
+ensaios.
 
 ---
 
